@@ -5,10 +5,12 @@ import Icon from '../../components/Icon';
 import axios from 'axios';
 import DeviceInfo from 'react-native-device-info';
 import { refreshAccessToken } from '../../services/service';
+import { FAB } from 'react-native-elements';
 
 const Dashboard = ({ navigation }) => {
   const { userData, updateUserData } = useUser();
   const [data, setData] = useState([]);
+  const [fabOpen, setFabOpen] = useState(false);
   const isFetching = useRef(false);
 
   React.useLayoutEffect(() => {
@@ -90,9 +92,8 @@ const Dashboard = ({ navigation }) => {
         }
       }));
 
-      // Avoid duplicate updates
       if (JSON.stringify(updatedData) !== JSON.stringify(userData)) {
-        updateUserData(updatedData); // This should handle AsyncStorage itself
+        updateUserData(updatedData);
         setData(updatedData);
       }
     } catch (error) {
@@ -132,7 +133,7 @@ const Dashboard = ({ navigation }) => {
         }
       }));
 
-      updateUserData(updatedData); // Handles AsyncStorage internally
+      updateUserData(updatedData);
       setData(updatedData);
 
       if (isAnyClaimed) {
@@ -150,14 +151,6 @@ const Dashboard = ({ navigation }) => {
 
   return (
     <View style={styles.container}>
-      <View style={styles.buttonContainer}>
-        <TouchableOpacity style={styles.button} onPress={fetchData}>
-          <Text style={styles.buttonText}>Refresh</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.button} onPress={claimAll}>
-          <Text style={styles.buttonText}>Claim All</Text>
-        </TouchableOpacity>
-      </View>
       <FlatList
         data={data}
         keyExtractor={(item, index) => index.toString()}
@@ -184,37 +177,64 @@ const Dashboard = ({ navigation }) => {
               <Text style={styles.label}>🏷️ Point Label:</Text>
               <Text style={[
                 styles.value,
-                item?.label === 'Claim' && { color: 'green',fontWeight:'bold' },
-                item?.label === 'Claimed' && { color: 'red',fontWeight:'bold' },
+                item?.label === 'Claim' && { color: 'green', fontWeight: 'bold' },
+                item?.label === 'Claimed' && { color: 'red', fontWeight: 'bold' },
               ]}
               >{item?.label}</Text>
             </View>
           </View>
-
         )}
       />
+
+<FAB
+  placement="right"
+  icon={{ name: 'electric-bolt', type: 'MaterialIcons', color: 'white' }}
+  color="#0a34cc"
+  onPress={() => setFabOpen(!fabOpen)}
+/>
+
+      {fabOpen && (
+        <>
+          <FAB
+            placement="right"
+            title="Refresh"
+            icon={{ name: 'refresh', color: 'white' }}
+            color="#2196f3"
+            style={{ position: 'absolute', bottom: 90, right: 20 }}
+            onPress={fetchData}
+          />
+          <FAB
+            placement="right"
+            title="Claim All"
+            icon={{ name: 'card-giftcard', color: 'white' }}
+            color="#4caf50"
+            style={{ position: 'absolute', bottom: 150, right: 20 }}
+            onPress={claimAll}
+          />
+        </>
+      )}
     </View>
   );
 };
 
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 20 },
-  buttonContainer: { flexDirection: 'row', justifyContent: 'center', marginBottom: 15 },
-  button: { backgroundColor: '#0a34cc', padding: 10, borderRadius: 5, marginHorizontal: 10 },
-  buttonText: { color: 'white', fontWeight: 'bold' },
-  headerButton: { marginRight: 10, width: 50, height: 35, alignItems: 'center', justifyContent: 'center' },
-
+  headerButton: {
+    marginRight: 10,
+    width: 50,
+    height: 35,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
   card: {
     padding: 15,
     marginBottom: 15,
     backgroundColor: '#fff',
     borderRadius: 10,
-    // iOS shadow
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.2,
     shadowRadius: 4,
-    // Android shadow
     elevation: 4,
   },
   label: {
@@ -235,6 +255,5 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
 });
-
 
 export default Dashboard;
