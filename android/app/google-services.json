@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "114620196061",
+    "project_id": "atomtool-841b1",
+    "storage_bucket": "atomtool-841b1.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:114620196061:android:39132569926befd28d2734",
+        "android_client_info": {
+          "package_name": "com.oneclickatom"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDTETRRHihPDiBoewbPktCuYdYKEmttLQI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
