@@ -149,10 +149,13 @@ const Dashboard = ({ navigation }) => {
           });
 
           const attribute = await refreshAccessToken(item.refresh_token, item.msisdn, item.user_id);
+          console.log(attribute)
           if (!attribute) continue;
 
           const headers = await getCommonHeaders(attribute.token);
           const params = { msisdn: item.msisdn, userid: item.user_id };
+
+          console.log('d',item.msisdn)
 
           await axios.post(
             'https://store.atom.com.mm/mytmapi/v1/my/point-system/claim', 
