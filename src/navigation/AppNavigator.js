@@ -3,6 +3,8 @@ import { createStackNavigator } from '@react-navigation/stack';
 import Dashboard from '../screens/Dashboard/Dashboard';
 import AddAccountScreen from '../screens/Dashboard/AddAccountScreen';
 import OTPVerification from '../screens/Dashboard/OTPVerification';
+import TransferPoint from '../screens/Dashboard/TransferPoint'
+import Search from '../screens/Dashboard/Search'
 
 const Stack = createStackNavigator();
 
@@ -15,6 +17,8 @@ const AppNavigator = () => (
     <Stack.Screen name="Dashboard" component={Dashboard} />
     <Stack.Screen name="AddAccount" component={AddAccountScreen} />
     <Stack.Screen name="OTPVerification" component={OTPVerification} />
+    <Stack.Screen name="TransferPoint" component={TransferPoint} />
+    <Stack.Screen name="Search" component={Search} />
   </Stack.Navigator>
 );
 
