@@ -542,7 +542,7 @@ const styles = StyleSheet.create({
   fabGroup: {
     position: 'absolute',
     right: 20,
-    bottom: 80,
+    bottom: 100,
     alignItems: 'flex-end',
     gap: 10,
   },
