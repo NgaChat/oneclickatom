@@ -1,105 +1,204 @@
-import React, { useRef } from 'react';
-import { View, Alert } from 'react-native';
-import { WebView } from 'react-native-webview';
+import React, { useState, useContext } from 'react';
+import {
+  View,
+  StyleSheet,
+  KeyboardAvoidingView,
+  Platform,
+  TouchableOpacity,
+  ActivityIndicator,
+  StatusBar,
+} from 'react-native';
+import { Text, TextInput } from 'react-native-paper';
+import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { useAuth } from '../../context/AuthContext';
+import { database } from '../../config/firebase';
+import { ref, query, orderByChild, equalTo, get, set } from 'firebase/database';
+import DeviceInfo from 'react-native-device-info';
+import { AlertContext } from '../../utils/alertUtils';
+import LinearGradient from 'react-native-linear-gradient';
 
-const TelegramLogin = () => {
-  const webViewRef = useRef(null);
+const LoginScreen = () => {
+  const { login, isLoading } = useAuth();
+  const { showAlert } = useContext(AlertContext);
 
-  // HTML template with Telegram Widget
-  const htmlTemplate = `
-  <!DOCTYPE html>
-  <html>
-  <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <style>
-      body {
-        margin: 0;
-        padding: 0;
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        height: 100vh;
-        background-color: #f5f5f5;
-        font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-      }
-      .container {
-        text-align: center;
-        padding: 20px;
-      }
-      .loading {
-        color: #888;
-        margin-top: 20px;
-      }
-    </style>
-  </head>
-  <body>
-    <div class="container">
-      <div id="telegram-login"></div>
-      <p class="loading" id="status">Loading Telegram Widget...</p>
-    </div>
-  
-    <script src="https://telegram.org/js/telegram-widget.js?22" 
-            data-telegram-login="AtomMaster_bot"
-            data-size="large"
-            data-radius="20"
-            data-onauth="onTelegramAuth(user)"
-            data-request-access="write"
-            async></script>
-  
-    <script>
-      // Status monitoring
-      const statusEl = document.getElementById('status');
-      
-      setTimeout(function() {
-        if (!document.querySelector('iframe')) {
-          statusEl.textContent = 'Failed to load Telegram Widget. Please check your internet connection.';
-          statusEl.style.color = 'red';
-        }
-      }, 5000);
-  
-      function onTelegramAuth(user) {
-        window.ReactNativeWebView.postMessage(JSON.stringify(user));
-        statusEl.textContent = 'Login successful!';
-        statusEl.style.color = 'green';
-      }
-    </script>
-  </body>
-  </html>
-  `;
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
 
-  const handleMessage = (event) => {
+  const handleLogin = async () => {
+    if (!phoneNumber) {
+      showAlert({ title: 'Error', message: 'Please enter your phone number' });
+      return;
+    }
+
     try {
-      const userData = JSON.parse(event.nativeEvent.data);
-      Alert.alert(
-        'Login Successful',
-        `Welcome ${userData.first_name} (ID: ${userData.id})`
-      );
-      // Handle user data (store in AsyncStorage, etc.)
-      console.log('Telegram user data:', userData);
+      setIsLoggingIn(true);
+      const currentDeviceId = await DeviceInfo.getUniqueId();
+      const userQuery = query(ref(database, 'users'), orderByChild('phoneNumber'), equalTo(phoneNumber));
+      const snapshot = await get(userQuery);
+
+      if (!snapshot.exists()) {
+        showAlert({ title: 'Account not exist', message: 'The phone number you entered is not registered.' });
+        return;
+      }
+
+      const userData = snapshot.val();
+      const userId = Object.keys(userData)[0];
+      const user = userData[userId];
+
+      if (!user.deviceId) {
+        await set(ref(database, `users/${userId}/deviceId`), currentDeviceId);
+        showAlert({ title: 'Success', message: 'Device registered successfully' });
+        await login(phoneNumber);
+      } else if (user.deviceId !== currentDeviceId) {
+        showAlert({ title: 'Device Mismatch', message: 'This account is registered on another device.' });
+      } else {
+        await login(phoneNumber);
+      }
     } catch (error) {
-      console.error('Error parsing Telegram auth data:', error);
+      showAlert({ title: 'Login Failed', message: error.message || 'An error occurred during login' });
+    } finally {
+      setIsLoggingIn(false);
     }
   };
 
   return (
-    <View style={{ flex: 1 }}>
-<WebView
-  source={{ html: htmlTemplate }}
-  javaScriptEnabled={true}
-  domStorageEnabled={true}
-  mixedContentMode="always"
-  allowsInlineMediaPlayback={true}
-  startInLoadingState={true}
-  style={{ flex: 1, backgroundColor: 'transparent' }}
-  onLoadEnd={() => console.log('WebView loaded completely')}
-  onError={(syntheticEvent) => {
-    const { nativeEvent } = syntheticEvent;
-    console.warn('WebView error: ', nativeEvent);
-  }}
-/>
-    </View>
+    <>
+      <StatusBar barStyle="light-content" backgroundColor="#0a34cc" />
+      <LinearGradient colors={['#0a34cc', '#0f3eea']} style={{ flex: 1 }}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={{ flex: 1 }}
+        >
+          <View style={styles.innerContainer}>
+            <View style={styles.header}>
+              <View style={styles.iconContainer}>
+                <Icon name="shield-account" size={40} color="#fff" />
+              </View>
+              <Text style={styles.title}>Welcome</Text>
+              <Text style={styles.subtitle}>Enter your phone number to login</Text>
+            </View>
+
+            <View style={styles.formContainer}>
+              <Text style={styles.inputLabel}>Phone Number</Text>
+              <View style={styles.inputWrapper}>
+                <Icon name="phone" size={20} color="#666" style={styles.inputIcon} />
+                <TextInput
+                  value={phoneNumber}
+                  onChangeText={setPhoneNumber}
+                  keyboardType="phone-pad"
+                  style={styles.input}
+                  placeholder="09xxxxxxxxx"
+                  placeholderTextColor="#999"
+                  disabled={isLoggingIn || isLoading}
+                  underlineColor="transparent"
+                  activeUnderlineColor="transparent"
+                  mode="flat"
+                  theme={{ colors: { text: '#000', background: 'transparent' } }}
+                />
+              </View>
+            </View>
+
+            <TouchableOpacity
+              style={[styles.button, (isLoggingIn || isLoading) && styles.buttonDisabled]}
+              onPress={handleLogin}
+              disabled={isLoggingIn || isLoading}
+              activeOpacity={0.8}
+            >
+              <LinearGradient
+                colors={['#1d4ed8', '#2563eb']}
+                style={styles.buttonGradient}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+              >
+                {isLoggingIn ? (
+                  <ActivityIndicator color="white" />
+                ) : (
+                  <Text style={styles.buttonText}>Login</Text>
+                )}
+              </LinearGradient>
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </LinearGradient>
+    </>
   );
 };
 
-export default TelegramLogin;
+const styles = StyleSheet.create({
+  innerContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    padding: 25,
+  },
+  header: {
+    alignItems: 'center',
+    marginBottom: 40,
+  },
+  iconContainer: {
+    backgroundColor: '#ffffff33',
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 15,
+  },
+  title: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#fff',
+    marginBottom: 8,
+  },
+  subtitle: {
+    fontSize: 14,
+    color: '#e0e0e0',
+  },
+  formContainer: {
+    marginBottom: 25,
+  },
+  inputLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#fff',
+    marginBottom: 8,
+    marginLeft: 5,
+  },
+  inputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    paddingHorizontal: 15,
+    height: 50,
+    elevation: 4,
+  },
+  inputIcon: {
+    marginRight: 10,
+  },
+  input: {
+    flex: 1,
+    fontSize: 16,
+    color: '#000',
+    backgroundColor: 'transparent',
+  },
+  button: {
+    borderRadius: 10,
+    overflow: 'hidden',
+    elevation: 3,
+  },
+  buttonGradient: {
+    height: 50,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  buttonText: {
+    color: 'white',
+    fontWeight: 'bold',
+    fontSize: 16,
+  },
+  buttonDisabled: {
+    opacity: 0.7,
+  },
+});
+
+export default LoginScreen;

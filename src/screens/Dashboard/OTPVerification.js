@@ -43,6 +43,24 @@ const OTPVerificationScreen = ({ route, navigation }) => {
 
   const inputsRef = React.useRef([]);
 
+  const storeTokenWithExpiry = async (userData) => {
+    try {
+      const cacheKey = `token_${userData.user_id}`;
+      const expiresAt = Date.now() + 24 * 60 * 60 * 1000; // 24 hours
+      
+      await AsyncStorage.setItem(
+        cacheKey,
+        JSON.stringify({ 
+          token: userData.token,
+          refresh_token: userData.refresh_token,
+          expiresAt 
+        })
+      );
+    } catch (error) {
+      console.error('Error storing token:', error);
+    }
+  };
+
   const verifyOTP = async () => {
     const otpString = otp.join('');
     if (otpString.length !== 6) {
@@ -63,7 +81,7 @@ const OTPVerificationScreen = ({ route, navigation }) => {
       'X-Server-Select': 'production',
       'User-Agent': userAgent,
       'Device-Name': deviceName,
-      'Date': today,
+      'If-Modified-Since': today,
       Host: 'store.atom.com.mm'
     };
 
@@ -77,6 +95,8 @@ const OTPVerificationScreen = ({ route, navigation }) => {
 
       if (result.status === 'success') {
         const attributeData = result.data.attribute;
+
+        await storeTokenWithExpiry(attributeData);
         let storedData = JSON.parse(await AsyncStorage.getItem('userData')) || [];
 
         const userIndex = storedData.findIndex(item => item.user_id === attributeData.user_id);

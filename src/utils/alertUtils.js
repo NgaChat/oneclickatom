@@ -1,11 +1,13 @@
 // src/utils/alertUtils.js
-import React, { useState, useContext } from 'react';
+import React, { useState, useContext, createContext } from 'react';
 import { View, Text, TouchableOpacity, Modal, StyleSheet } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { ThemeContext } from '../context/ThemeContext';
 
-let showAlertFunction;
+// Context for the alert
+export const AlertContext = createContext();
 
+// The alert provider component to wrap the app
 export const AlertProvider = ({ children }) => {
   const theme = useContext(ThemeContext);
   const [visible, setVisible] = useState(false);
@@ -13,18 +15,23 @@ export const AlertProvider = ({ children }) => {
     title: '',
     message: '',
     buttonText: 'OK',
-    onPress: () => {}
+    onPress: () => {},
   });
 
-  showAlertFunction = (config) => {
-    setAlertConfig(config);
+  // Show alert function
+  const showAlert = (config) => {
+    setAlertConfig({
+      buttonText: 'OK',
+      onPress: () => {},
+      ...config,
+    });
     setVisible(true);
   };
 
   const styles = createStyles(theme);
 
   return (
-    <>
+    <AlertContext.Provider value={{ showAlert }}>
       {children}
       <Modal
         transparent={true}
@@ -43,7 +50,10 @@ export const AlertProvider = ({ children }) => {
               style={styles.alertButton}
               onPress={() => {
                 setVisible(false);
-                alertConfig.onPress();
+                // Ensure that the onPress callback is a function before calling it
+                if (typeof alertConfig.onPress === 'function') {
+                  alertConfig.onPress();
+                }
               }}
             >
               <Text style={styles.alertButtonText}>{alertConfig.buttonText}</Text>
@@ -51,10 +61,11 @@ export const AlertProvider = ({ children }) => {
           </View>
         </View>
       </Modal>
-    </>
+    </AlertContext.Provider>
   );
 };
 
+// Styles for the modal
 const createStyles = (theme) => StyleSheet.create({
   modalOverlay: {
     flex: 1,
@@ -64,7 +75,7 @@ const createStyles = (theme) => StyleSheet.create({
     padding: theme.spacing.large,
   },
   alertContainer: {
-    width: '100%',
+    width: '80%',
     backgroundColor: theme.colors.white,
     borderRadius: theme.radius.large,
     padding: theme.spacing.large,
@@ -103,13 +114,3 @@ const createStyles = (theme) => StyleSheet.create({
     textAlign: 'center',
   },
 });
-
-export const showErrorAlert = (config) => {
-  if (showAlertFunction) {
-    showAlertFunction({
-      buttonText: 'OK',
-      onPress: () => {},
-      ...config
-    });
-  }
-};

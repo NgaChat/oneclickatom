@@ -1,4 +1,4 @@
-package com.oneclickatom
+package com.atommaster
 
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate

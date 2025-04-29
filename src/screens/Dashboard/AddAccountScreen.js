@@ -47,7 +47,7 @@ const AddAccountScreen = ({ navigation }) => {
       'X-Server-Select': 'production',
       'User-Agent': userAgent,
       'Device-Name': deviceName,
-      'Date': today,
+      'If-Modified-Since': today,
       Host: 'store.atom.com.mm'
     };
 

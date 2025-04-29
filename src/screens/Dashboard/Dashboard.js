@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, FlatList, Alert, TextInput, Modal, ActivityIndicator } from 'react-native';
 import { useUser } from '../../context/UserContext';
 import Icon from '../../components/Icon';
@@ -7,6 +7,8 @@ import DeviceInfo from 'react-native-device-info';
 import { refreshAccessToken } from '../../services/service';
 import { FAB } from 'react-native-elements';
 import LinearGradient from 'react-native-linear-gradient';
+
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 const Dashboard = ({ navigation }) => {
   const { userData, updateUserData } = useUser();
@@ -39,7 +41,7 @@ const Dashboard = ({ navigation }) => {
     });
   }, [navigation]);
 
-  const getCommonHeaders = async (token) => {
+  const getCommonHeaders = useCallback(async (token) => {
     const userAgent = 'MyTM/4.11.1/Android/35';
     const deviceName = await DeviceInfo.getDeviceName() || DeviceInfo.getModel();
     const today = new Date().toUTCString();
@@ -52,10 +54,11 @@ const Dashboard = ({ navigation }) => {
       'Device-Name': deviceName,
       'If-Modified-Since': today,
       Host: 'store.atom.com.mm',
+      'Content-Type': 'application/json; charset=UTF-8',
     };
-  };
+  }, []);
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     if (!userData || userData.length === 0 || isFetching.current) return;
     
     isFetching.current = true;
@@ -67,42 +70,58 @@ const Dashboard = ({ navigation }) => {
     });
 
     try {
-      const updatedData = await Promise.all(
-        userData.map(async (item, index) => {
-          try {
-            setLoadingProgress(prev => ({
-              ...prev,
-              current: index + 1,
-              message: `Fetching ${index + 1}/${userData.length}...`
-            }));
+      const BATCH_SIZE = 20;
+      const updatedData = [];
+      
+      for (let i = 0; i < userData.length; i += BATCH_SIZE) {
+        const batch = userData.slice(i, i + BATCH_SIZE);
+        
+        const batchResults = await Promise.all(
+          batch.map(async (item, index) => {
+            try {
+              setLoadingProgress(prev => ({
+                ...prev,
+                current: i + index + 1,
+                message: `Fetching ${i + index + 1}/${userData.length}...`
+              }));
+              
+              await delay(300);
+              
+              let attribute = item;
+              const headers = await getCommonHeaders(attribute.token);
+              const params = { msisdn: item.msisdn, userid: item.user_id, v: '4.11' };
 
-            const attribute = await refreshAccessToken(item.refresh_token, item.msisdn, item.user_id);
-            if (!attribute) return item;
+              const [dashboardRes, profileRes, , pointCheck] = await Promise.all([
+                axios.get('https://store.atom.com.mm/mytmapi/v1/my/dashboard?isFirstTime=1', { params, headers }),
+                axios.get('https://store.atom.com.mm/mytmapi/v1/my/lightweight-balance', { params, headers }),
+                axios.get('https://store.atom.com.mm/mytmapi/v1/my/settings', { params, headers }),
+                axios.get('https://store.atom.com.mm/mytmapi/v1/my/point-system/claim-list', { params, headers })
+              ]);
 
-            const headers = await getCommonHeaders(attribute.token);
-            const params = { msisdn: item.msisdn, userid: item.user_id, v: '4.11' };
+              return {
+                ...attribute,
+                mainBalance: profileRes.data?.data?.attribute?.mainBalance || {
+                  availableTotalBalance: 0,
+                  currency: 'Ks',
+                },
+                totalPoint: dashboardRes.data.data.attribute.starInfo.totalPoint,
+                points: pointCheck.data.data.attribute[0],
+                label: pointCheck.data.data.attribute[0]?.label || '',
+              };
+            } catch (error) {
+              console.error(`Error refreshing token for ${item.user_id}:`, error.message);
+              return item;
+            }
+          })
+        );
 
-            const dashboardRes = await axios.get('https://store.atom.com.mm/mytmapi/v1/my/dashboard?isFirstTime=1', { params, headers });
-            const profileRes = await axios.get('https://store.atom.com.mm/mytmapi/v1/my/lightweight-balance', { params, headers });
-            await axios.get('https://store.atom.com.mm/mytmapi/v1/my/settings', { params, headers });
-            const pointCheck = await axios.get('https://store.atom.com.mm/mytmapi/v1/my/point-system/claim-list', { params, headers });
-
-            return {
-              ...attribute,
-              mainBalance: profileRes.data?.data?.attribute?.mainBalance || {
-                availableTotalBalance: 0,
-                currency: 'Ks',
-              },
-              totalPoint: dashboardRes.data.data.attribute.starInfo.totalPoint,
-              points: pointCheck.data.data.attribute[0],
-              label: pointCheck.data.data.attribute[0]?.label || '',
-            };
-          } catch (error) {
-            console.error(`Error refreshing token for ${item.user_id}:`, error.message);
-            return item;
-          }
-        })
-      );
+        updatedData.push(...batchResults);
+        
+        if (i % (BATCH_SIZE * 5) === 0) {
+          setData([...updatedData]);
+          updateUserData([...updatedData]);
+        }
+      }
 
       if (JSON.stringify(updatedData) !== JSON.stringify(userData)) {
         updateUserData(updatedData);
@@ -117,9 +136,9 @@ const Dashboard = ({ navigation }) => {
       setIsLoading(false);
       setLoadingProgress({ current: 0, total: 0, message: 'Loading...' });
     }
-  };
+  }, [userData, getCommonHeaders, updateUserData]);
 
-  const claimAll = async () => {
+  const claimAll = useCallback(async () => {
     if (!userData.length) return;
     
     const claimableItems = userData.filter(item => item.points?.enable);
@@ -136,41 +155,47 @@ const Dashboard = ({ navigation }) => {
     });
 
     let isAnyClaimed = false;
+    const BATCH_SIZE = 10;
+    const updatedData = [...userData];
+    
     try {
-      const updatedData = [...userData];
-      
-      for (let i = 0; i < claimableItems.length; i++) {
-        const item = claimableItems[i];
-        try {
-          setLoadingProgress({
-            current: i + 1,
-            total: claimableItems.length,
-            message: `Claiming ${i + 1}/${claimableItems.length}...`
-          });
+      for (let i = 0; i < claimableItems.length; i += BATCH_SIZE) {
+        const batch = claimableItems.slice(i, i + BATCH_SIZE);
+        
+        await Promise.all(batch.map(async (item, index) => {
+          try {
+            setLoadingProgress({
+              current: i + index + 1,
+              total: claimableItems.length,
+              message: `Claiming ${i + index + 1}/${claimableItems.length}...`
+            });
 
-          const attribute = await refreshAccessToken(item.refresh_token, item.msisdn, item.user_id);
-          console.log(attribute)
-          if (!attribute) continue;
+            const attribute = await refreshAccessToken(item.refresh_token, item.msisdn, item.user_id);
+            if (!attribute) return;
 
-          const headers = await getCommonHeaders(attribute.token);
-          const params = { msisdn: item.msisdn, userid: item.user_id };
+            const headers = await getCommonHeaders(attribute.token);
+            const params = { msisdn: item.msisdn, userid: item.user_id };
 
-          console.log('d',item.msisdn)
+            await axios.post(
+              'https://store.atom.com.mm/mytmapi/v1/my/point-system/claim', 
+              { id: item.points.id }, 
+              { params, headers }
+            );
 
-          await axios.post(
-            'https://store.atom.com.mm/mytmapi/v1/my/point-system/claim', 
-            { id: item.points.id }, 
-            { params, headers }
-          );
-
-          const itemIndex = updatedData.findIndex(d => d.user_id === item.user_id);
-          if (itemIndex !== -1) {
-            updatedData[itemIndex] = { ...updatedData[itemIndex], ...attribute };
+            const itemIndex = updatedData.findIndex(d => d.user_id === item.user_id);
+            if (itemIndex !== -1) {
+              updatedData[itemIndex] = { ...updatedData[itemIndex], ...attribute };
+            }
+            
+            isAnyClaimed = true;
+          } catch (error) {
+            console.error(`Error claiming points for ${item.user_id}:`, error.message);
           }
-          
-          isAnyClaimed = true;
-        } catch (error) {
-          console.error(`Error claiming points for ${item.user_id}:`, error.message);
+        }));
+
+        if (i % (BATCH_SIZE * 3) === 0) {
+          updateUserData([...updatedData]);
+          setData([...updatedData]);
         }
       }
 
@@ -188,51 +213,95 @@ const Dashboard = ({ navigation }) => {
       setIsLoading(false);
       setLoadingProgress({ current: 0, total: 0, message: 'Loading...' });
     }
-  };
+  }, [userData, getCommonHeaders, updateUserData, fetchData]);
 
-  const handleDeleteItem = (itemId) => {
+  const handleDeleteItem = useCallback((itemId) => {
     Alert.alert(
       'Delete Item',
       'Are you sure you want to delete this item?',
       [
-        {
-          text: 'Cancel',
-          style: 'cancel',
-        },
+        { text: 'Cancel', style: 'cancel' },
         {
           text: 'Delete',
           onPress: () => {
             const updatedData = data.filter(item => item.user_id !== itemId);
             updateUserData(updatedData);
             setData(updatedData);
-            Alert.alert('Success', 'Item deleted successfully.');
           },
         },
       ],
       { cancelable: false }
     );
-  };
+  }, [data, updateUserData]);
 
   useEffect(() => {
     fetchData();
   }, [userData]);
 
-  const filteredData = searchText
-    ? data.filter((item) => item.msisdn.toLowerCase().includes(searchText.toLowerCase()))
-    : data;
+  const filteredData = useMemo(() => {
+    return searchText
+      ? data.filter((item) => item.msisdn.toLowerCase().includes(searchText.toLowerCase()))
+      : data;
+  }, [data, searchText]);
 
-  const sortedData = filteredData.sort((a, b) => {
-    return (b.totalPoint || 0) - (a.totalPoint || 0);
-  });
+  const sortedData = useMemo(() => {
+    return [...filteredData].sort((a, b) => {
+      return (b.totalPoint || 0) - (a.totalPoint || 0);
+    });
+  }, [filteredData]);
 
-  const totalPhoneNumber = data.length;
-  const totalPoints = data.reduce((sum, item) => sum + (item.totalPoint || 0), 0);
-  const claimedCount = data.filter((item) => item.label === 'Claimed').length;
-  const unclaimedCount = data.filter((item) => item.label === 'Claim').length;
+  const summaryData = useMemo(() => {
+    const totalPhoneNumber = data.length;
+    const totalPoints = data.reduce((sum, item) => sum + (item.totalPoint || 0), 0);
+    const claimedCount = data.filter((item) => item.label === 'Claimed').length;
+    const unclaimedCount = data.filter((item) => item.label === 'Claim').length;
+    
+    return { totalPhoneNumber, totalPoints, claimedCount, unclaimedCount };
+  }, [data]);
+
+  const renderItem = useCallback(({ item }) => (
+    <View style={styles.card}>
+      <View style={styles.cardHeader}>
+        <View style={styles.phoneContainer}>
+          <Icon name="phone" size={18} color="#0a34cc" style={styles.cardIcon} />
+          <Text style={styles.phoneText}>{item?.msisdn}</Text>
+        </View>
+        <TouchableOpacity onPress={() => handleDeleteItem(item.user_id)}>
+          <Icon name="trash-can-outline" size={22} color="#f44336" type="MaterialCommunityIcons" />
+        </TouchableOpacity>
+      </View>
+      
+      <View style={styles.divider} />
+      
+      <View style={styles.detailRow}>
+        <View style={styles.detailItem}>
+          <Icon name="wallet" size={16} color="#4caf50" type="MaterialCommunityIcons" />
+          <Text style={styles.detailLabel}>Balance:</Text>
+          <Text style={styles.detailValue}>
+            {item?.mainBalance?.availableTotalBalance} {item?.mainBalance?.currency}
+          </Text>
+        </View>
+        
+        <View style={styles.detailItem}>
+          <Icon name="star" size={16} color="#ffd700" type="MaterialCommunityIcons" />
+          <Text style={styles.detailLabel}>Points:</Text>
+          <Text style={styles.detailValue}>{item?.totalPoint}</Text>
+        </View>
+      </View>
+      
+      <View style={styles.statusContainer}>
+        <View style={[
+          styles.statusBadge,
+          item?.label === 'Claim' ? styles.claimBadge : styles.claimedBadge
+        ]}>
+          <Text style={styles.statusText}>{item?.label}</Text>
+        </View>
+      </View>
+    </View>
+  ), [handleDeleteItem]);
 
   return (
     <LinearGradient colors={['#f5f7fa', '#e4e8f0']} style={styles.container}>
-      {/* Loading Modal */}
       <Modal
         transparent={true}
         animationType="fade"
@@ -255,34 +324,32 @@ const Dashboard = ({ navigation }) => {
         </View>
       </Modal>
 
-      {/* Top Summary Card */}
       <LinearGradient colors={['#0a34cc', '#1a4bdf']} style={styles.summaryCard}>
         <Text style={styles.summaryTitle}>📊 Account Summary</Text>
         
         <View style={styles.summaryGrid}>
           <View style={styles.summaryItem}>
             <Text style={styles.summaryItemLabel}>Phone Numbers</Text>
-            <Text style={styles.summaryItemValue}>{totalPhoneNumber}</Text>
+            <Text style={styles.summaryItemValue}>{summaryData.totalPhoneNumber}</Text>
           </View>
           
           <View style={styles.summaryItem}>
             <Text style={styles.summaryItemLabel}>Total Points</Text>
-            <Text style={[styles.summaryItemValue, { color: '#ffd700' }]}>{totalPoints}</Text>
+            <Text style={[styles.summaryItemValue, { color: '#ffd700' }]}>{summaryData.totalPoints}</Text>
           </View>
           
           <View style={styles.summaryItem}>
             <Text style={styles.summaryItemLabel}>Claimed</Text>
-            <Text style={[styles.summaryItemValue, { color: '#4caf50' }]}>{claimedCount}</Text>
+            <Text style={[styles.summaryItemValue, { color: '#4caf50' }]}>{summaryData.claimedCount}</Text>
           </View>
           
           <View style={styles.summaryItem}>
             <Text style={styles.summaryItemLabel}>Unclaimed</Text>
-            <Text style={[styles.summaryItemValue, { color: '#f44336' }]}>{unclaimedCount}</Text>
+            <Text style={[styles.summaryItemValue, { color: '#f44336' }]}>{summaryData.unclaimedCount}</Text>
           </View>
         </View>
       </LinearGradient>
 
-      {/* Search Input */}
       <View style={styles.searchContainer}>
         <Icon name="search" size={20} color="#999" style={styles.searchIcon} />
         <TextInput
@@ -299,54 +366,18 @@ const Dashboard = ({ navigation }) => {
         ) : null}
       </View>
 
-      {/* Main List */}
       <FlatList
         data={sortedData}
-        keyExtractor={(item, index) => index.toString()}
+        keyExtractor={(item) => item.user_id}
         contentContainerStyle={styles.listContent}
-        renderItem={({ item }) => (
-          <View style={styles.card}>
-            <View style={styles.cardHeader}>
-              <View style={styles.phoneContainer}>
-                <Icon name="phone" size={18} color="#0a34cc" style={styles.cardIcon} />
-                <Text style={styles.phoneText}>{item?.msisdn}</Text>
-              </View>
-              <TouchableOpacity onPress={() => handleDeleteItem(item.user_id)}>
-                <Icon name="trash-can-outline" size={22} color="#f44336" type="MaterialCommunityIcons" />
-              </TouchableOpacity>
-            </View>
-            
-            <View style={styles.divider} />
-            
-            <View style={styles.detailRow}>
-              <View style={styles.detailItem}>
-                <Icon name="wallet" size={16} color="#4caf50" type="MaterialCommunityIcons" />
-                <Text style={styles.detailLabel}>Balance:</Text>
-                <Text style={styles.detailValue}>
-                  {item?.mainBalance?.availableTotalBalance} {item?.mainBalance?.currency}
-                </Text>
-              </View>
-              
-              <View style={styles.detailItem}>
-                <Icon name="star" size={16} color="#ffd700" type="MaterialCommunityIcons" />
-                <Text style={styles.detailLabel}>Points:</Text>
-                <Text style={styles.detailValue}>{item?.totalPoint}</Text>
-              </View>
-            </View>
-            
-            <View style={styles.statusContainer}>
-              <View style={[
-                styles.statusBadge,
-                item?.label === 'Claim' ? styles.claimBadge : styles.claimedBadge
-              ]}>
-                <Text style={styles.statusText}>{item?.label}</Text>
-              </View>
-            </View>
-          </View>
-        )}
+        renderItem={renderItem}
+        initialNumToRender={20}
+        maxToRenderPerBatch={20}
+        windowSize={21}
+        removeClippedSubviews={true}
+        updateCellsBatchingPeriod={50}
       />
 
-      {/* Floating Action Buttons */}
       <FAB
         placement="right"
         icon={{ name: 'menu', type: 'MaterialIcons', color: 'white' }}
@@ -386,6 +417,15 @@ const Dashboard = ({ navigation }) => {
             titleStyle={styles.fabTitle}
             size="small"
           />
+          <FAB
+            title="Create User"
+            icon={{ name: 'account-plus', color: 'white' }}
+            color="#9c27b0"
+            style={styles.subFab}
+            onPress={() => navigation.navigate('CreateUser', { data })}
+            titleStyle={styles.fabTitle}
+            size="small"
+          />
         </View>
       )}
     </LinearGradient>
@@ -401,7 +441,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 5,
   },
-  // Summary Card
   summaryCard: {
     borderRadius: 15,
     padding: 20,
@@ -442,7 +481,6 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: 'bold',
   },
-  // Search
   searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -463,11 +501,9 @@ const styles = StyleSheet.create({
   clearSearch: {
     padding: 5,
   },
-  // List
   listContent: {
     paddingBottom: 80,
   },
-  // Card
   card: {
     backgroundColor: 'white',
     borderRadius: 12,
@@ -535,7 +571,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: 'bold',
   },
-  // FABs
   mainFab: {
     position: 'absolute',
     right: 20,
@@ -560,7 +595,6 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     marginLeft: 5,
   },
-  // Loading modal
   modalBackground: {
     flex: 1,
     alignItems: 'center',

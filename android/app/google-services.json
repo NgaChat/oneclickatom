@@ -1,21 +1,21 @@
 {
   "project_info": {
-    "project_number": "114620196061",
-    "project_id": "atomtool-841b1",
-    "storage_bucket": "atomtool-841b1.firebasestorage.app"
+    "project_number": "488843004199",
+    "project_id": "atom-master-8f5fa",
+    "storage_bucket": "atom-master-8f5fa.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:114620196061:android:39132569926befd28d2734",
+        "mobilesdk_app_id": "1:488843004199:android:65d7d2eaf6b9e5c2d78102",
         "android_client_info": {
-          "package_name": "com.oneclickatom"
+          "package_name": "com.atommaster"
         }
       },
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyDTETRRHihPDiBoewbPktCuYdYKEmttLQI"
+          "current_key": "AIzaSyBjAl9_uLYgBPKCnMOgMsQ75wl7otj6CJo"
         }
       ],
       "services": {

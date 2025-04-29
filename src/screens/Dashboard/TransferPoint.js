@@ -1,38 +1,142 @@
-import React, { useState } from 'react';
-import { View, Text, FlatList, StyleSheet, TouchableOpacity, TextInput } from 'react-native';
+import React, { useState, useCallback, } from 'react';
+import { 
+  View, 
+  Text, 
+  FlatList, 
+  StyleSheet, 
+  TouchableOpacity, 
+  TextInput,
+  ActivityIndicator,
+  Alert
+} from 'react-native';
 import CheckBox from '@react-native-community/checkbox';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import LinearGradient from 'react-native-linear-gradient';
+import DeviceInfo from 'react-native-device-info';
+import axios from 'axios';
+import { useFocusEffect } from '@react-navigation/native';
+
 
 const TransferPoint = ({ route, navigation }) => {
   const { data } = route.params;
   const [phone, setPhone] = useState('');
   const [amount, setAmount] = useState('');
   const [selectedItem, setSelectedItem] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState(null);
 
   React.useLayoutEffect(() => {
     navigation.setOptions({
       headerTitle: 'Transfer Points',
       headerTitleAlign: 'center',
-      headerStyle: { 
+      headerStyle: {
         backgroundColor: '#0a34cc',
         elevation: 0,
         shadowOpacity: 0,
       },
       headerTintColor: 'white',
-      headerTitleStyle: { 
+      headerTitleStyle: {
         fontWeight: 'bold',
         fontSize: 18,
       },
     });
   }, [navigation]);
 
-  const handleTransfer = () => {
-    if (selectedItem !== null) {
+  useFocusEffect(
+    useCallback(() => {
+      // Reset amount & ph every time screen is focused
+      setAmount('');
+      setPhone('');
+      setSelectedItem(null)
+    }, [])
+  );
+
+  const getCommonHeaders = useCallback(async (token) => {
+    const userAgent = 'MyTM/4.11.1/Android/35';
+    const deviceName = await DeviceInfo.getDeviceName() || DeviceInfo.getModel();
+    const today = new Date().toUTCString();
+    return {
+      Authorization: `Bearer ${token}`,
+      Connection: 'Keep-Alive',
+      'Accept-Encoding': 'gzip',
+      'X-Server-Select': 'production',
+      'User-Agent': userAgent,
+      'Device-Name': deviceName,
+      'If-Modified-Since': today,
+      Host: 'store.atom.com.mm',
+      'Content-Type': 'application/json; charset=UTF-8',
+    };
+  }, []);
+
+  const handleTransfer = async () => {
+    if (selectedItem === null) {
+      Alert.alert('Error', 'Please select an account to transfer from');
+      return;
+    }
+
+    if (!phone || !amount) {
+      Alert.alert('Error', 'Please enter both phone number and amount');
+      return;
+    }
+
+    if (isNaN(amount) ){
+      Alert.alert('Error', 'Please enter a valid number for amount');
+      return;
+    }
+
+    setIsLoading(true);
+    setError(null);
+
+    try {
       const selectedItemData = sortedData[selectedItem];
-      console.log('Selected item for transfer:', selectedItemData);
-    } else {
-      console.log('No item selected');
+      const item = selectedItemData;
+      const headers = await getCommonHeaders(selectedItemData.token);
+      const params = { 
+        msisdn: selectedItemData.msisdn, 
+        userid: selectedItemData.user_id 
+      };
+
+      const body = {
+        transfereeId: phone,
+        amount: Number(amount),
+      };
+
+      const transfer = await axios.post(
+        'https://store.atom.com.mm/mytmapi/v1/my/point-system/point-transfer', 
+        body,
+        { params, headers }
+      );
+
+      const result = transfer.data.data.attribute;
+      
+      if (result.response.message === 'OTP needed!') {
+        navigation.navigate('TransferOtp', { data: result, item });
+      } else {
+        Alert.alert('Success', 'Points transferred successfully!');
+        setPhone('');
+        setAmount('');
+        setSelectedItem(null);
+      }
+    } catch (error) {
+      console.error('Transfer error:', error);
+      setError(error);
+      
+      let errorMessage = 'Failed to transfer points';
+      if (error.response) {
+        if (error.response.data && error.response.data.message) {
+          errorMessage = error.response.data.message;
+        } else if (error.response.status === 401) {
+          errorMessage = 'Authentication failed. Please try again.';
+        } else if (error.response.status === 400) {
+          errorMessage = 'Invalid request. Please check your inputs.';
+        }
+      } else if (error.request) {
+        errorMessage = 'Network error. Please check your connection.';
+      }
+
+      Alert.alert('Error', errorMessage);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -43,7 +147,7 @@ const TransferPoint = ({ route, navigation }) => {
   const sortedData = data
     .sort((a, b) => Number(b.totalPoint) - Number(a.totalPoint));
 
-  const isTransferDisabled = !phone || !amount || selectedItem === null;
+  const isTransferDisabled = !phone || !amount || selectedItem === null || isLoading;
 
   return (
     <LinearGradient colors={['#f5f7fa', '#e4e8f0']} style={styles.container}>
@@ -65,9 +169,10 @@ const TransferPoint = ({ route, navigation }) => {
             value={phone}
             onChangeText={setPhone}
             keyboardType="phone-pad"
+            editable={!isLoading}
           />
         </View>
-        
+
         <View style={styles.inputContainer}>
           <Icon name="star" size={20} color="#0a34cc" style={styles.inputIcon} />
           <TextInput
@@ -77,6 +182,7 @@ const TransferPoint = ({ route, navigation }) => {
             value={amount}
             onChangeText={setAmount}
             keyboardType="numeric"
+            editable={!isLoading}
           />
         </View>
 
@@ -85,67 +191,82 @@ const TransferPoint = ({ route, navigation }) => {
           onPress={handleTransfer}
           disabled={isTransferDisabled}
         >
-          <LinearGradient 
+          <LinearGradient
             colors={isTransferDisabled ? ['#ccc', '#aaa'] : ['#0a34cc', '#1a4bdf']}
             style={styles.buttonGradient}
           >
-            <Text style={styles.buttonText}>Transfer Points</Text>
-            <Icon name="arrow-forward" size={20} color="white" />
+            {isLoading ? (
+              <ActivityIndicator color="white" />
+            ) : (
+              <>
+                <Text style={styles.buttonText}>Transfer Points</Text>
+                <Icon name="arrow-forward" size={20} color="white" />
+              </>
+            )}
           </LinearGradient>
         </TouchableOpacity>
       </View>
 
       {/* Accounts List */}
       <Text style={styles.sectionTitle}>Available Accounts</Text>
-      <FlatList
-        data={sortedData}
-        keyExtractor={(item, index) => index.toString()}
-        contentContainerStyle={styles.listContent}
-        renderItem={({ item, index }) => (
-          <TouchableOpacity 
-            style={[
-              styles.card,
-              selectedItem === index && styles.selectedCard
-            ]}
-            onPress={() => toggleSelectItem(index)}
-          >
-            <View style={styles.cardHeader}>
-              <CheckBox
-                value={selectedItem === index}
-                onValueChange={() => toggleSelectItem(index)}
-                boxType="circle"
-                tintColor="#0a34cc"
-                onCheckColor="#0a34cc"
-                onFillColor="#0a34cc"
-                onTintColor="#0a34cc"
-                style={styles.checkbox}
-              />
-              <View style={styles.phoneContainer}>
-                <Icon name="sim-card" size={18} color="#0a34cc" />
-                <Text style={styles.phoneText}>{item?.msisdn}</Text>
+      {isLoading ? (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#0a34cc" />
+          <Text style={styles.loadingText}>Processing transfer...</Text>
+        </View>
+      ) : (
+        <FlatList
+          data={sortedData}
+          keyExtractor={(item, index) => index.toString()}
+          contentContainerStyle={styles.listContent}
+          renderItem={({ item, index }) => (
+            <TouchableOpacity
+              style={[
+                styles.card,
+                selectedItem === index && styles.selectedCard
+              ]}
+              onPress={() => !isLoading && toggleSelectItem(index)}
+              disabled={isLoading}
+            >
+              <View style={styles.cardHeader}>
+                <CheckBox
+                  value={selectedItem === index}
+                  onValueChange={() => toggleSelectItem(index)}
+                  boxType="circle"
+                  tintColor="#0a34cc"
+                  onCheckColor="#0a34cc"
+                  onFillColor="#0a34cc"
+                  onTintColor="#0a34cc"
+                  style={styles.checkbox}
+                  disabled={isLoading}
+                />
+                <View style={styles.phoneContainer}>
+                  <Icon name="sim-card" size={18} color="#0a34cc" />
+                  <Text style={styles.phoneText}>{item?.msisdn}</Text>
+                </View>
               </View>
-            </View>
-            
-            <View style={styles.cardDetails}>
-              <View style={styles.detailRow}>
-                <Icon name="account-balance-wallet" size={16} color="#4caf50" />
-                <Text style={styles.detailLabel}>Balance:</Text>
-                <Text style={styles.detailValue}>
-                  {item?.mainBalance?.availableTotalBalance} {item?.mainBalance?.currency}
-                </Text>
+
+              <View style={styles.cardDetails}>
+                <View style={styles.detailRow}>
+                  <Icon name="account-balance-wallet" size={16} color="#4caf50" />
+                  <Text style={styles.detailLabel}>Balance:</Text>
+                  <Text style={styles.detailValue}>
+                    {item?.mainBalance?.availableTotalBalance} {item?.mainBalance?.currency}
+                  </Text>
+                </View>
+
+                <View style={styles.detailRow}>
+                  <Icon name="star" size={16} color="#ffd700" />
+                  <Text style={styles.detailLabel}>Points:</Text>
+                  <Text style={[styles.detailValue, { color: '#0a34cc' }]}>
+                    {item?.totalPoint}
+                  </Text>
+                </View>
               </View>
-              
-              <View style={styles.detailRow}>
-                <Icon name="star" size={16} color="#ffd700" />
-                <Text style={styles.detailLabel}>Points:</Text>
-                <Text style={[styles.detailValue, { color: '#0a34cc' }]}>
-                  {item?.totalPoint}
-                </Text>
-              </View>
-            </View>
-          </TouchableOpacity>
-        )}
-      />
+            </TouchableOpacity>
+          )}
+        />
+      )}
     </LinearGradient>
   );
 };
@@ -285,6 +406,15 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '500',
     color: '#333',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    marginTop: 10,
+    color: '#666',
   },
 });
 
