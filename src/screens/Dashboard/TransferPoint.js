@@ -1,4 +1,4 @@
-import React, { useState, useCallback, } from 'react';
+import React, { useState, useCallback, useContext,useEffect } from 'react';
 import { 
   View, 
   Text, 
@@ -15,10 +15,12 @@ import LinearGradient from 'react-native-linear-gradient';
 import DeviceInfo from 'react-native-device-info';
 import axios from 'axios';
 import { useFocusEffect } from '@react-navigation/native';
+import { useUser } from '../../context/UserContext'; // UserContext ကိုသုံးမည်
+import { getCommonHeaders } from '../../services/service';
+import { listenForRefresh } from '../../utils/eventEmitter';
 
-
-const TransferPoint = ({ route, navigation }) => {
-  const { data } = route.params;
+const TransferPoint = ({ navigation }) => {
+  const { userData } = useUser(); // route.params အစား userData ကိုယူမည်
   const [phone, setPhone] = useState('');
   const [amount, setAmount] = useState('');
   const [selectedItem, setSelectedItem] = useState(null);
@@ -44,29 +46,21 @@ const TransferPoint = ({ route, navigation }) => {
 
   useFocusEffect(
     useCallback(() => {
-      // Reset amount & ph every time screen is focused
+      // Reset amount & phone every time screen is focused
       setAmount('');
       setPhone('');
       setSelectedItem(null)
     }, [])
   );
+const [refresh, setRefresh] = useState(false);
 
-  const getCommonHeaders = useCallback(async (token) => {
-    const userAgent = 'MyTM/4.11.1/Android/35';
-    const deviceName = await DeviceInfo.getDeviceName() || DeviceInfo.getModel();
-    const today = new Date().toUTCString();
-    return {
-      Authorization: `Bearer ${token}`,
-      Connection: 'Keep-Alive',
-      'Accept-Encoding': 'gzip',
-      'X-Server-Select': 'production',
-      'User-Agent': userAgent,
-      'Device-Name': deviceName,
-      'If-Modified-Since': today,
-      Host: 'store.atom.com.mm',
-      'Content-Type': 'application/json; charset=UTF-8',
-    };
-  }, []);
+useEffect(() => {
+  const unsubscribe = listenForRefresh(() => {
+    setRefresh(prev => !prev); // force re-render
+  });
+  return unsubscribe;
+}, []);
+  
 
   const handleTransfer = async () => {
     if (selectedItem === null) {
@@ -79,7 +73,7 @@ const TransferPoint = ({ route, navigation }) => {
       return;
     }
 
-    if (isNaN(amount) ){
+    if (isNaN(amount)) {
       Alert.alert('Error', 'Please enter a valid number for amount');
       return;
     }
@@ -144,7 +138,8 @@ const TransferPoint = ({ route, navigation }) => {
     setSelectedItem(selectedItem === index ? null : index);
   };
 
-  const sortedData = data
+  // UserContext မှရရှိသော userData ကိုသုံးမည်
+  const sortedData = userData
     .sort((a, b) => Number(b.totalPoint) - Number(a.totalPoint));
 
   const isTransferDisabled = !phone || !amount || selectedItem === null || isLoading;
@@ -270,6 +265,7 @@ const TransferPoint = ({ route, navigation }) => {
     </LinearGradient>
   );
 };
+
 
 const styles = StyleSheet.create({
   container: {

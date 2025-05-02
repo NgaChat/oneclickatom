@@ -1,55 +1,73 @@
-import React, { useState, useLayoutEffect } from 'react';
+import { useUser } from '../../context/UserContext';
+import React, { useState, useEffect } from 'react';
 import { View, Text, TextInput, StyleSheet, Alert, TouchableOpacity, ActivityIndicator } from 'react-native';
 import DeviceInfo from 'react-native-device-info';
 import LinearGradient from 'react-native-linear-gradient';
 import Icon from 'react-native-vector-icons/MaterialIcons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useHeader } from '../../components';
+import { getBasicHeaders } from '../../services/service';
 
 const AddAccountScreen = ({ navigation }) => {
-  const [phoneNumber, setPhoneNumber] = useState('09787406689');
+  const [phoneNumber, setPhoneNumber] = useState('');
   const [loading, setLoading] = useState(false);
+  const [accountLimit, setAccountLimit] = useState(3); // Default limit
+  const { userData } = useUser();
 
-  useLayoutEffect(() => {
-    navigation.setOptions({
-      headerTitle: 'Add New Account',
-      headerTitleAlign: 'center',
-      headerStyle: { 
-        backgroundColor: '#0a34cc',
-        elevation: 0,
-        shadowOpacity: 0,
-      },
-      headerTintColor: 'white',
-      headerTitleStyle: { 
-        fontWeight: 'bold',
-        fontSize: 18,
-      },
-    });
-  }, [navigation]);
+  useHeader(navigation, 'Add SIM')
+
+  // Get account limit from AsyncStorage
+  useEffect(() => {
+    const getAccountLimit = async () => {
+      try {
+        const storedUser = await AsyncStorage.getItem('user');
+        if (storedUser) {
+          const user = JSON.parse(storedUser);
+          console.log(user)
+          // Use the limit from storage or default to 3
+          setAccountLimit(user.limitNumber || 3);
+        }
+      } catch (error) {
+        console.error('Error getting account limit:', error);
+        // Fallback to default limit if error occurs
+        setAccountLimit(3);
+      }
+    };
+    getAccountLimit();
+  }, []);
 
   const sendOTP = async () => {
+    // Validate inputs
     if (phoneNumber.length !== 10) {
-      Alert.alert('Invalid Number', 'Please enter a valid 10-digit phone number.');
+      Alert.alert('Invalid Number', 'Please enter a valid 10-digit phone number');
+      return;
+    }
+
+    // Check if reached account limit
+    if (userData?.length >= accountLimit) {
+      Alert.alert(
+        'Account Limit Reached',
+        `You can only add up to ${accountLimit} accounts.`,
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
+    // Check for duplicate account
+    if (userData?.some(account => account.msisdn === `+95${phoneNumber}`)) {
+      Alert.alert('Error', 'This phone number is already added');
       return;
     }
 
     setLoading(true);
 
+    // Prepare API request
     const url = `https://store.atom.com.mm/mytmapi/v1/en/local-auth/send-otp?msisdn=${phoneNumber}&userid=-1&v=4.11`;
     const body = { msisdn: phoneNumber };
 
-    const userAgent = 'MyTM/4.11.1/Android/35';
-    const deviceName = await DeviceInfo.getDeviceName() || DeviceInfo.getModel();
-    const today = new Date().toUTCString();
 
-    const headers = {
-      'Content-Type': 'application/json; charset=UTF-8',
-      Connection: 'Keep-Alive',
-      'Accept-Encoding': 'gzip',
-      'X-Server-Select': 'production',
-      'User-Agent': userAgent,
-      'Device-Name': deviceName,
-      'If-Modified-Since': today,
-      Host: 'store.atom.com.mm'
-    };
+
+    const headers =  await getBasicHeaders();
 
     try {
       const response = await fetch(url, {
@@ -59,75 +77,80 @@ const AddAccountScreen = ({ navigation }) => {
       });
 
       const result = await response.json();
-      setLoading(false);
+      console.log(result)
 
       if (result.status === 'success') {
-        const { msisdn, code } = result.data.attribute;
-        navigation.navigate('OTPVerification', { 
-          msisdn, 
-          code,
-          phoneNumber // Pass phone number to next screen
+        navigation.navigate('OTPVerification', {
+          msisdn: result.data.attribute.msisdn,
+          code: result.data.attribute.code,
+          expire_within : result.data.attribute.expire_within,
+          phoneNumber
         });
       } else {
-        Alert.alert('Error', result.message || 'Failed to send OTP. Please try again.');
+        Alert.alert('Error', result.message || 'Failed to send OTP');
       }
     } catch (error) {
+      Alert.alert('Error', 'Failed to connect to server');
+    } finally {
       setLoading(false);
-      Alert.alert('Connection Error', 'Unable to connect to server. Please check your internet connection.');
     }
   };
+
+  // Determine if continue button should be disabled
+  const isContinueDisabled = loading || phoneNumber.length !== 10;
 
   return (
     <LinearGradient colors={['#f5f7fa', '#e4e8f0']} style={styles.container}>
       <View style={styles.content}>
-        {/* Header Illustration */}
         <View style={styles.headerIllustration}>
           <View style={styles.iconContainer}>
             <Icon name="sim-card" size={40} color="#0a34cc" />
           </View>
           <Text style={styles.title}>Add ATOM Account</Text>
-          <Text style={styles.subtitle}>Enter your Atom phone number to continue</Text>
+          <Text style={styles.subtitle}>Enter your phone number to continue</Text>
+
+          <Text style={styles.limitText}>
+            Account limit: {userData?.length || 0}/{accountLimit}
+          </Text>
         </View>
 
-        {/* Input Field */}
         <View style={styles.inputContainer}>
           <Text style={styles.inputLabel}>Phone Number</Text>
           <View style={styles.phoneInputWrapper}>
             <Text style={styles.countryCode}>+95</Text>
             <TextInput
               style={styles.input}
-              placeholder="e.g. 09787406689"
+              placeholder="9787406689"
               placeholderTextColor="#999"
               keyboardType="phone-pad"
-              maxLength={11}
+              maxLength={10}
               value={phoneNumber}
               onChangeText={setPhoneNumber}
               autoFocus={true}
             />
-            {phoneNumber ? (
-              <TouchableOpacity 
+            {phoneNumber && (
+              <TouchableOpacity
                 style={styles.clearButton}
                 onPress={() => setPhoneNumber('')}
               >
                 <Icon name="close" size={20} color="#999" />
               </TouchableOpacity>
-            ) : null}
+            )}
           </View>
-          <Text style={styles.noteText}>We'll send a verification code to this number</Text>
+          <Text style={styles.noteText}>We'll send a verification code</Text>
         </View>
 
-        {/* Submit Button */}
         <TouchableOpacity
-          style={[styles.button, loading && styles.buttonDisabled]}
+          style={[styles.button, isContinueDisabled && styles.buttonDisabled]}
           onPress={sendOTP}
-          disabled={loading}
+          disabled={isContinueDisabled}
           activeOpacity={0.8}
         >
           <LinearGradient
-            colors={loading ? ['#ccc', '#aaa'] : ['#0a34cc', '#1a4bdf']}
+            colors={isContinueDisabled ? ['#ccc', '#aaa'] : ['#0a34cc', '#1a4bdf']}
             style={styles.buttonGradient}
-            start={{x: 0, y: 0}}
-            end={{x: 1, y: 0}}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
           >
             {loading ? (
               <ActivityIndicator color="white" />
@@ -171,13 +194,25 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#0a34cc',
     marginBottom: 8,
-    textAlign: 'center',
   },
   subtitle: {
     fontSize: 14,
     color: '#666',
     textAlign: 'center',
-    maxWidth: '80%',
+  },
+  loadingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  loadingText: {
+    marginLeft: 10,
+    color: '#666',
+  },
+  limitText: {
+    marginTop: 10,
+    color: '#666',
+    fontWeight: '500',
   },
   inputContainer: {
     marginBottom: 30,
@@ -187,7 +222,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#333',
     marginBottom: 8,
-    marginLeft: 5,
   },
   phoneInputWrapper: {
     flexDirection: 'row',
@@ -198,13 +232,11 @@ const styles = StyleSheet.create({
     height: 50,
     borderWidth: 1,
     borderColor: '#ddd',
-    elevation: 1,
   },
   countryCode: {
     fontSize: 16,
     color: '#333',
     marginRight: 5,
-    fontWeight: '500',
   },
   input: {
     flex: 1,
@@ -219,12 +251,10 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#999',
     marginTop: 8,
-    marginLeft: 5,
   },
   button: {
     borderRadius: 10,
     overflow: 'hidden',
-    elevation: 3,
   },
   buttonGradient: {
     flexDirection: 'row',

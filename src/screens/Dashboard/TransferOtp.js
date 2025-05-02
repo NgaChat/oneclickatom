@@ -17,6 +17,9 @@ import { useNavigation } from '@react-navigation/native';
 import DeviceInfo from 'react-native-device-info';
 import axios from 'axios';
 import Icon from 'react-native-vector-icons/MaterialIcons';
+import { emitRefreshEvent } from '../../utils/eventEmitter';
+import { getCommonHeaders } from '../../services/service';
+
 
 const OtpVerifyScreen = ({ route }) => {
   const navigation = useNavigation();
@@ -59,22 +62,7 @@ const OtpVerifyScreen = ({ route }) => {
     }
   }, [success]);
 
-  const getCommonHeaders = useCallback(async (token) => {
-    const userAgent = 'MyTM/4.11.1/Android/35';
-    const deviceName = await DeviceInfo.getDeviceName() || DeviceInfo.getModel();
-    const today = new Date().toUTCString();
-    return {
-      Authorization: `Bearer ${token}`,
-      Connection: 'Keep-Alive',
-      'Accept-Encoding': 'gzip',
-      'X-Server-Select': 'production',
-      'User-Agent': userAgent,
-      'Device-Name': deviceName,
-      'If-Modified-Since': today,
-      Host: 'store.atom.com.mm',
-      'Content-Type': 'application/json; charset=UTF-8',
-    };
-  }, []);
+
 
   const handleResendOtp = async () => {
     try {
@@ -126,6 +114,7 @@ const OtpVerifyScreen = ({ route }) => {
       console.log(result.response.message);
       
       if (transfer.data.status === 'success') {
+        emitRefreshEvent();
         setSuccess(true);
         setTimeout(() => {
           setOtp('');

@@ -1,4 +1,3 @@
-// src/utils/alertUtils.js
 import React, { useState, useContext, createContext } from 'react';
 import { View, Text, TouchableOpacity, Modal, StyleSheet } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialIcons';
@@ -15,6 +14,7 @@ export const AlertProvider = ({ children }) => {
     title: '',
     message: '',
     buttonText: 'OK',
+    type: 'error', // default type
     onPress: () => {},
   });
 
@@ -23,12 +23,27 @@ export const AlertProvider = ({ children }) => {
     setAlertConfig({
       buttonText: 'OK',
       onPress: () => {},
+      type: 'error',
       ...config,
     });
     setVisible(true);
   };
 
   const styles = createStyles(theme);
+
+  // Determine icon and color based on type
+  const getIcon = () => {
+    switch (alertConfig.type) {
+      case 'success':
+        return <Icon name="check-circle" size={40} color={theme.colors.success} />;
+      case 'warning':
+        return <Icon name="warning" size={40} color={theme.colors.warning} />;
+      case 'info':
+        return <Icon name="info" size={40} color={theme.colors.info} />;
+      default:
+        return <Icon name="error-outline" size={40} color={theme.colors.error} />;
+    }
+  };
 
   return (
     <AlertContext.Provider value={{ showAlert }}>
@@ -41,16 +56,13 @@ export const AlertProvider = ({ children }) => {
       >
         <View style={styles.modalOverlay}>
           <View style={styles.alertContainer}>
-            <View style={styles.iconContainer}>
-              <Icon name="error-outline" size={40} color={theme.colors.error} />
-            </View>
+            <View style={styles.iconContainer}>{getIcon()}</View>
             <Text style={styles.alertTitle}>{alertConfig.title}</Text>
             <Text style={styles.alertMessage}>{alertConfig.message}</Text>
             <TouchableOpacity
               style={styles.alertButton}
               onPress={() => {
                 setVisible(false);
-                // Ensure that the onPress callback is a function before calling it
                 if (typeof alertConfig.onPress === 'function') {
                   alertConfig.onPress();
                 }
