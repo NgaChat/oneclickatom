@@ -2,15 +2,19 @@ import React from 'react';
 import { View, Text, Modal, ActivityIndicator, StyleSheet } from 'react-native';
 
 const LoadingModal = ({ visible, progress }) => {
+  let total = 0;
+  if(progress && progress.total){
+    total = progress.total;
+  }
   return (
     <Modal transparent visible={visible}>
       <View style={styles.modalBackground}>
         <View style={styles.content}>
           <ActivityIndicator size="large" color="#0a34cc" />
-          <Text style={styles.text}>{progress.message}</Text>
-          {progress.total > 0 && (
+          <Text style={styles.text}>{progress?progress.message:""}</Text>
+          {total > 0 && (
             <Text style={styles.progressText}>
-              {progress.current}/{progress.total}
+              {progress.current}/{total}
             </Text>
           )}
         </View>

@@ -2,36 +2,23 @@ import React, { useState, useLayoutEffect, useContext, useEffect } from 'react';
 import { View, Text, TextInput, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
-import { useUser } from '../../context/UserContext';
 import LinearGradient from 'react-native-linear-gradient';
 import Icon from 'react-native-vector-icons/MaterialIcons';
-import { getBasicHeaders } from '../../services/service';
+import { getBasicHeaders, getUser, saveLocalSimData, saveFirebaseSimData } from '../../services/service'; // Import saveLocalSimData
 import { AlertContext } from '../../utils/alertUtils';
+import { database } from '../../config/firebase';
+import { ref, set, get } from 'firebase/database';
+import { useHeader } from '../../components';
+import { emitRefreshEvent } from '../../utils/eventEmitter';
 
 const OTPVerificationScreen = ({ route, navigation }) => {
   const { msisdn, code, expire_within, phoneNumber } = route.params;
   const [otp, setOtp] = useState(['', '', '', '', '', '']);
   const [loading, setLoading] = useState(false);
   const [countdown, setCountdown] = useState(expire_within || 0);
-  const { updateUserData } = useUser();
   const { showAlert } = useContext(AlertContext);
 
-  useLayoutEffect(() => {
-    navigation.setOptions({
-      headerTitle: 'Verify OTP',
-      headerTitleAlign: 'center',
-      headerStyle: {
-        backgroundColor: '#0a34cc',
-        elevation: 0,
-        shadowOpacity: 0,
-      },
-      headerTintColor: 'white',
-      headerTitleStyle: {
-        fontWeight: 'bold',
-        fontSize: 18,
-      },
-    });
-  }, [navigation]);
+  useHeader(navigation, 'Verify OTP');
 
   // Countdown effect
   useEffect(() => {
@@ -104,18 +91,12 @@ const OTPVerificationScreen = ({ route, navigation }) => {
       if (result.status === 'success') {
         const attributeData = result.data.attribute;
 
-        await storeTokenWithExpiry(attributeData);
-        let storedData = JSON.parse(await AsyncStorage.getItem('userData')) || [];
+        // Save data locally using saveLocalSimData
+       
+        await saveLocalSimData(attributeData);
 
-        const userIndex = storedData.findIndex(item => item.user_id === attributeData.user_id);
 
-        if (userIndex > -1) {
-          storedData[userIndex] = attributeData;
-        } else {
-          storedData.push(attributeData);
-        }
-
-        updateUserData(storedData);
+       
 
         showAlert({
           title: 'Verification Successful',

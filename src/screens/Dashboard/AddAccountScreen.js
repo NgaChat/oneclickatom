@@ -1,73 +1,71 @@
-import { useUser } from '../../context/UserContext';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect,useContext } from 'react';
 import { View, Text, TextInput, StyleSheet, Alert, TouchableOpacity, ActivityIndicator } from 'react-native';
-import DeviceInfo from 'react-native-device-info';
 import LinearGradient from 'react-native-linear-gradient';
 import Icon from 'react-native-vector-icons/MaterialIcons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useHeader } from '../../components';
-import { getBasicHeaders } from '../../services/service';
+import { getBasicHeaders, getAccountLimit,getAllLocalSimData, checkDeviceId } from '../../services/service';
+import { AlertContext } from '../../utils/alertUtils'; // Import AlertContext
+
 
 const AddAccountScreen = ({ navigation }) => {
   const [phoneNumber, setPhoneNumber] = useState('');
   const [loading, setLoading] = useState(false);
-  const [accountLimit, setAccountLimit] = useState(3); // Default limit
-  const { userData } = useUser();
+  const [accountLimit, setAccountLimit] = useState(0); // Default limit
+  const [currentAccountCount, setCurrentAccountCount] = useState(0);
+  const { showAlert } = useContext(AlertContext); // Use AlertContext
 
-  useHeader(navigation, 'Add SIM')
 
-  // Get account limit from AsyncStorage
+
+  useHeader(navigation, 'Add SIM');
+
   useEffect(() => {
-    const getAccountLimit = async () => {
+    const fetchAccountData = async () => {
       try {
-        const storedUser = await AsyncStorage.getItem('user');
-        if (storedUser) {
-          const user = JSON.parse(storedUser);
-          console.log(user)
-          // Use the limit from storage or default to 3
-          setAccountLimit(user.limitNumber || 3);
+        // Fetch account limit from Firebase
+        const limitNumber = await getAccountLimit();
+        if (limitNumber !== null) {
+          setAccountLimit(limitNumber);
+          console.log('Account limit:', limitNumber);
+        } else {
+          console.log('No account limit found. Using default limit.');
         }
+
+        // Fetch current account count from SQLite
+        const allAccounts = await getAllLocalSimData();
+        setCurrentAccountCount(allAccounts.length);
+        console.log('Current account count:', allAccounts.length);
       } catch (error) {
-        console.error('Error getting account limit:', error);
-        // Fallback to default limit if error occurs
-        setAccountLimit(3);
+        console.error('Error fetching account data:', error);
       }
     };
-    getAccountLimit();
+
+    fetchAccountData();
   }, []);
 
   const sendOTP = async () => {
-    // Validate inputs
     if (phoneNumber.length !== 10) {
-      Alert.alert('Invalid Number', 'Please enter a valid 10-digit phone number');
+      showAlert({
+        title: 'Invalid Number',
+        message: 'Please enter a valid 10-digit phone number',
+      });
       return;
     }
 
-    // Check if reached account limit
-    if (userData?.length >= accountLimit) {
-      Alert.alert(
-        'Account Limit Reached',
-        `You can only add up to ${accountLimit} accounts.`,
-        [{ text: 'OK' }]
-      );
+    if (currentAccountCount >= accountLimit) {
+      showAlert({
+        title: 'Account Limit Reached',
+        message: `You have reached the maximum account limit of ${accountLimit}.`,
+      });
       return;
     }
 
-    // Check for duplicate account
-    if (userData?.some(account => account.msisdn === `+95${phoneNumber}`)) {
-      Alert.alert('Error', 'This phone number is already added');
-      return;
-    }
+    
 
     setLoading(true);
 
-    // Prepare API request
     const url = `https://store.atom.com.mm/mytmapi/v1/en/local-auth/send-otp?msisdn=${phoneNumber}&userid=-1&v=4.11`;
     const body = { msisdn: phoneNumber };
-
-
-
-    const headers =  await getBasicHeaders();
+    const headers = await getBasicHeaders();
 
     try {
       const response = await fetch(url, {
@@ -77,26 +75,30 @@ const AddAccountScreen = ({ navigation }) => {
       });
 
       const result = await response.json();
-      console.log(result)
 
       if (result.status === 'success') {
         navigation.navigate('OTPVerification', {
           msisdn: result.data.attribute.msisdn,
           code: result.data.attribute.code,
-          expire_within : result.data.attribute.expire_within,
-          phoneNumber
+          expire_within: result.data.attribute.expire_within,
+          phoneNumber,
         });
       } else {
-        Alert.alert('Error', result.message || 'Failed to send OTP');
+    showAlert({
+          title: 'Error',
+          message: result.message || 'Failed to send OTP',
+        });
       }
     } catch (error) {
-      Alert.alert('Error', 'Failed to connect to server');
+      showAlert({
+        title: 'Error',
+        message: 'Failed to connect to server',
+      });
     } finally {
       setLoading(false);
     }
   };
 
-  // Determine if continue button should be disabled
   const isContinueDisabled = loading || phoneNumber.length !== 10;
 
   return (
@@ -108,9 +110,8 @@ const AddAccountScreen = ({ navigation }) => {
           </View>
           <Text style={styles.title}>Add ATOM Account</Text>
           <Text style={styles.subtitle}>Enter your phone number to continue</Text>
-
           <Text style={styles.limitText}>
-            Account limit: {userData?.length || 0}/{accountLimit}
+            Account limit: {currentAccountCount || 0}/{accountLimit}
           </Text>
         </View>
 
@@ -199,15 +200,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#666',
     textAlign: 'center',
-  },
-  loadingContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 10,
-  },
-  loadingText: {
-    marginLeft: 10,
-    color: '#666',
   },
   limitText: {
     marginTop: 10,

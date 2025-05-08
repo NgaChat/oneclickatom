@@ -1,5 +1,5 @@
 // src/screens/LoginScreen.js
-import React, { useState, useContext } from 'react';
+import React, { useState, useContext,useEffect } from 'react';
 import {
   View,
   StyleSheet,
@@ -8,6 +8,7 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   StatusBar,
+  Linking
 } from 'react-native';
 import { Text, TextInput } from 'react-native-paper';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
@@ -17,6 +18,7 @@ import { ref, query, orderByChild, equalTo, get, set } from 'firebase/database';
 import DeviceInfo from 'react-native-device-info';
 import { AlertContext } from '../../utils/alertUtils';
 import LinearGradient from 'react-native-linear-gradient';
+import FontAwesome5con from 'react-native-vector-icons/FontAwesome5';
 
 const LoginScreen = ({ navigation }) => {
   const { login, isLoading } = useAuth();
@@ -24,6 +26,14 @@ const LoginScreen = ({ navigation }) => {
 
   const [phoneNumber, setPhoneNumber] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+
+  useEffect(() => {
+    showAlert({
+      title: 'သတိပြုရန်',
+      message: 'မြန်မာနိုင်ငံရဲ့ အခြေအနေအရ VPN အသုံးပြုပေးပါ',
+      duration: 6000 // Show for 6 seconds
+    });
+  }, []);
 
   // Validate Myanmar phone number format
   const validatePhoneNumber = (number) => {
@@ -77,9 +87,11 @@ const LoginScreen = ({ navigation }) => {
       if (!user.deviceId) {
         // First time login on this device
         await set(ref(database, `users/${userId}/deviceId`), currentDeviceId);
+        // await set(ref(database, `users/${userId}/data`), []);
         showAlert({ 
           title: 'Device Registered', 
-          message: 'This device has been successfully registered.' 
+          message: 'This device has been successfully registered.' ,
+          type :'success'
         });
         user.deviceId = currentDeviceId; // Update local user object
         await login(user);
@@ -105,6 +117,13 @@ const LoginScreen = ({ navigation }) => {
     }
   };
 
+  const handleContactSupport = () => {
+    Linking.openURL('https://t.me/mrngachat');
+  };
+
+  const handleCallSupport = () => {
+    Linking.openURL('tel:+959978114808');
+  };
   return (
     <>
       <StatusBar barStyle="light-content" backgroundColor="#0a34cc" />
@@ -122,7 +141,7 @@ const LoginScreen = ({ navigation }) => {
               <View style={styles.iconContainer}>
                 <Icon name="shield-account" size={40} color="#fff" />
               </View>
-              <Text style={styles.title}>Welcome Back</Text>
+              <Text style={styles.title}>Welcome</Text>
               <Text style={styles.subtitle}>Enter your phone number to login</Text>
             </View>
 
@@ -177,6 +196,32 @@ const LoginScreen = ({ navigation }) => {
                 )}
               </LinearGradient>
             </TouchableOpacity>
+
+            <View style={styles.contactContainer}>
+              <Text style={styles.contactText}>Need help? Contact us:</Text>
+              
+              <TouchableOpacity 
+                style={styles.contactButton}
+                onPress={handleContactSupport}
+              >
+                <FontAwesome5con name="telegram-plane" size={20} color="#0088cc" />
+                <Text style={[styles.contactLink, {color: '#0088cc'}]}>
+                  @mrngachat
+                </Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity 
+                style={styles.contactButton}
+                onPress={handleCallSupport}
+              >
+                <Icon name="phone" size={20} color="#4CAF50" />
+                <Text style={[styles.contactLink, {color: '#4CAF50'}]}>
+                  09-978 114 808
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+
           </View>
         </KeyboardAvoidingView>
       </LinearGradient>
@@ -275,6 +320,29 @@ const styles = StyleSheet.create({
   },
   buttonDisabled: {
     opacity: 0.7,
+  },
+  contactContainer: {
+    marginTop: 30,
+    alignItems: 'center',
+  },
+  contactText: {
+    color: '#e0e0e0',
+    marginBottom: 10,
+    fontSize: 14,
+  },
+  contactButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 5,
+    paddingVertical: 8,
+    paddingHorizontal: 15,
+    borderRadius: 5,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  contactLink: {
+    marginLeft: 8,
+    fontSize: 14,
+    fontWeight: '500',
   },
 });
 

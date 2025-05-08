@@ -4,6 +4,7 @@ import { View, Text, StyleSheet } from 'react-native';
 import { LinearGradient } from 'react-native-linear-gradient';
 
 const SummaryCard = ({ data }) => {
+  
   // Calculate summary data
   const summary = {
     totalPhoneNumber: data.length,

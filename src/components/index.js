@@ -4,4 +4,5 @@ export { default as FloatingActionMenu } from './FloatingActionMenu';
 export { default as LoadingModal } from './LoadingModal';
 export { default as SearchBar } from './SearchBar';
 export { default as SummaryCard } from './SummaryCard';
-export { default as useHeader } from './headerConfig'
+export { default as useHeader } from './headerConfig';
+export { default as SoldSimCard } from './SoldSimCard';

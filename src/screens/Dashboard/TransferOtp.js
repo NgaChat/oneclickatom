@@ -1,4 +1,4 @@
-import React, { useState, useLayoutEffect, useCallback, useEffect } from 'react';
+import React, { useState, useLayoutEffect, useCallback, useEffect, useContext } from 'react';
 import {
   View,
   Text,
@@ -19,7 +19,9 @@ import axios from 'axios';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { emitRefreshEvent } from '../../utils/eventEmitter';
 import { getCommonHeaders } from '../../services/service';
+import { AlertContext } from '../../utils/alertUtils'; // Import AlertContext
 
+import { useHeader } from '../../components';
 
 const OtpVerifyScreen = ({ route }) => {
   const navigation = useNavigation();
@@ -31,16 +33,10 @@ const OtpVerifyScreen = ({ route }) => {
   const [success, setSuccess] = useState(false);
   const fadeAnim = useState(new Animated.Value(0))[0];
   const { data, item } = route.params;
+  const { showAlert } = useContext(AlertContext); // Use AlertContext
+  useHeader(navigation, 'OTP Verification');
 
-  useLayoutEffect(() => {
-    navigation.setOptions({
-      headerTitle: 'Verify OTP',
-      headerTitleAlign: 'center',
-      headerStyle: { backgroundColor: '#0a34cc' },
-      headerTintColor: 'white',
-      headerTitleStyle: { fontWeight: '900' },
-    });
-  }, [navigation]);
+
 
   useEffect(() => {
     // Start countdown on mount
@@ -62,19 +58,20 @@ const OtpVerifyScreen = ({ route }) => {
     }
   }, [success]);
 
-
-
   const handleResendOtp = async () => {
     try {
       setResendLoading(true);
       setError(null);
-      
+
       // TODO: Implement actual OTP resend API call
       // This is just a simulation
       await new Promise(resolve => setTimeout(resolve, 1500));
-      
+
       setCountdown(60);
-      Alert.alert('OTP Sent', 'A new OTP has been sent to your registered phone number');
+      showAlert({
+        title: 'OTP Sent',
+        message: 'A new OTP has been sent to your registered phone number.',
+      });
     } catch (err) {
       setError('Failed to resend OTP. Please try again.');
     } finally {
@@ -87,16 +84,17 @@ const OtpVerifyScreen = ({ route }) => {
       setError('Please enter OTP');
       return;
     }
-    
+
     if (otp.length !== 4) {
       setError('OTP must be 4 digits');
       return;
     }
 
     try {
+
       setLoading(true);
       setError(null);
-      
+
       const headers = await getCommonHeaders(item.token);
       const params = { msisdn: item.msisdn, userid: item.user_id };
       const body = {
@@ -111,19 +109,31 @@ const OtpVerifyScreen = ({ route }) => {
       );
 
       const result = transfer.data.data.attribute;
-      console.log(result.response.message);
-      
+      console.log(result);
+
       if (transfer.data.status === 'success') {
-        emitRefreshEvent();
+        // Call fetchSingleItem with item.msisdn
+
+
+        // Proceed with success actions after fetchSingleItem completes
         setSuccess(true);
         setTimeout(() => {
           setOtp('');
-          navigation.goBack();
+          // navigation.goBack({ params: { msisdn: item.msisdn } });
+          navigation.navigate('TransferPoint', { msisdn: item.msisdn });
         }, 2000);
       } else {
         setError(result.response.message || 'Verification failed');
+        showAlert({
+          title: 'Verification Failed',
+          message: result.response.message || 'Verification failed.',
+        });
       }
     } catch (err) {
+      showAlert({
+        title: 'Error',
+        message: err.response?.data?.message || 'An error occurred during verification.',
+      });
       console.error('OTP Verification Error:', err);
       setError(err.response?.data?.message || 'An error occurred during verification');
     } finally {
@@ -194,10 +204,10 @@ const OtpVerifyScreen = ({ route }) => {
             onPress={handleResendOtp}
             disabled={countdown > 0 || resendLoading}
           >
-           
+
           </TouchableOpacity>
 
-         
+
         </View>
       </ScrollView>
     </KeyboardAvoidingView>

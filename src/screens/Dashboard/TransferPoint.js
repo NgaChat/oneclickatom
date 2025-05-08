@@ -1,10 +1,10 @@
-import React, { useState, useCallback, useContext,useEffect } from 'react';
-import { 
-  View, 
-  Text, 
-  FlatList, 
-  StyleSheet, 
-  TouchableOpacity, 
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import {
+  View,
+  Text,
+  FlatList,
+  StyleSheet,
+  TouchableOpacity,
   TextInput,
   ActivityIndicator,
   Alert
@@ -12,55 +12,114 @@ import {
 import CheckBox from '@react-native-community/checkbox';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import LinearGradient from 'react-native-linear-gradient';
-import DeviceInfo from 'react-native-device-info';
+import { useDashboardData } from '../../hooks/useDashboardData';
+import { useHeader } from '../../components';
+import { getCommonHeaders, getAllLocalSimData } from '../../services/service';
 import axios from 'axios';
 import { useFocusEffect } from '@react-navigation/native';
-import { useUser } from '../../context/UserContext'; // UserContext ကိုသုံးမည်
-import { getCommonHeaders } from '../../services/service';
-import { listenForRefresh } from '../../utils/eventEmitter';
 
-const TransferPoint = ({ navigation }) => {
-  const { userData } = useUser(); // route.params အစား userData ကိုယူမည်
+const TransferPoint = ({ navigation, route }) => {
+  const {
+    data,
+    fetchData,
+    loadMore,
+    refreshData,
+    hasMore,
+    isRefreshing,
+    isLoadingMore,
+    loadingState,
+    fetchAllData,
+    fetchSingleItem
+  } = useDashboardData();
+
   const [phone, setPhone] = useState('');
   const [amount, setAmount] = useState('');
   const [selectedItem, setSelectedItem] = useState(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showAll, setShowAll] = useState(false);
+  const [localData, setLocalData] = useState([]);
+  const [isLoadingLocal, setIsLoadingLocal] = useState(false);
 
-  React.useLayoutEffect(() => {
-    navigation.setOptions({
-      headerTitle: 'Transfer Points',
-      headerTitleAlign: 'center',
-      headerStyle: {
-        backgroundColor: '#0a34cc',
-        elevation: 0,
-        shadowOpacity: 0,
-      },
-      headerTintColor: 'white',
-      headerTitleStyle: {
-        fontWeight: 'bold',
-        fontSize: 18,
-      },
-    });
-  }, [navigation]);
+  // Load local SIM data
+  const loadLocalData = useCallback(async () => {
+    try {
+      setIsLoadingLocal(true);
+      const localSimData = await getAllLocalSimData();
+      setLocalData(localSimData);
+    } catch (error) {
+      console.error('Failed to load local SIM data:', error);
+    } finally {
+      setIsLoadingLocal(false);
+    }
+  }, []);
+
+  // Fetch initial data on mount
+  useEffect(() => {
+    const initialize = async () => {
+      await fetchData();
+      await loadLocalData();
+    };
+    initialize();
+  }, [fetchData, loadLocalData]);
 
   useFocusEffect(
     useCallback(() => {
-      // Reset amount & phone every time screen is focused
-      setAmount('');
-      setPhone('');
-      setSelectedItem(null)
-    }, [])
+      if (route.params?.msisdn) {
+        fetchSingleItem(route.params.msisdn);
+      }
+    }, [route.params?.msisdn, fetchSingleItem])
   );
-const [refresh, setRefresh] = useState(false);
 
-useEffect(() => {
-  const unsubscribe = listenForRefresh(() => {
-    setRefresh(prev => !prev); // force re-render
-  });
-  return unsubscribe;
-}, []);
-  
+  useHeader(navigation, 'Transfer Points');
+
+  // Toggle show all and refresh data
+  const toggleShowAll = async () => {
+    const newShowAll = !showAll;
+    setShowAll(newShowAll);
+
+    if (newShowAll) {
+      await fetchAllData();
+    } else {
+      await refreshData();
+    }
+    await loadLocalData();
+  };
+
+  // Combine remote and local data
+  const combinedData = useMemo(() => {
+    const remoteItems = data || [];
+    const localItems = localData || [];
+    
+    const combined = [...remoteItems];
+    
+    localItems.forEach(localItem => {
+      const exists = remoteItems.some(remoteItem => 
+        remoteItem.msisdn === localItem.msisdn
+      );
+      if (!exists) {
+        combined.push({
+          ...localItem,
+          isLocal: true
+        });
+      }
+    });
+    
+    return combined;
+  }, [data, localData]);
+
+  // Filter data based on search query and showAll status
+  const filteredData = useMemo(() => {
+    const lowerCaseSearch = searchQuery.toLowerCase();
+    
+    return combinedData.filter(item => {
+      const matchesSearch = searchQuery === '' || 
+        item.msisdn.includes(searchQuery) || 
+        (item.name && item.name.toLowerCase().includes(lowerCaseSearch)) ||
+        (item.user_id && item.user_id.toString().includes(searchQuery));
+      
+      return showAll ? matchesSearch : (matchesSearch && (item.totalPoint || 0) > 0);
+    });
+  }, [combinedData, searchQuery, showAll]);
 
   const handleTransfer = async () => {
     if (selectedItem === null) {
@@ -78,13 +137,15 @@ useEffect(() => {
       return;
     }
 
-    setIsLoading(true);
-    setError(null);
-
     try {
-      const selectedItemData = sortedData[selectedItem];
-      const item = selectedItemData;
-      const headers = await getCommonHeaders(selectedItemData.token);
+      const selectedItemData = filteredData[selectedItem];
+      
+      if (selectedItemData.isLocal) {
+        Alert.alert('Error', 'Cannot transfer from local-only accounts');
+        return;
+      }
+
+      const headers = await getCommonHeaders(selectedItemData.access_token);
       const params = { 
         msisdn: selectedItemData.msisdn, 
         userid: selectedItemData.user_id 
@@ -104,33 +165,18 @@ useEffect(() => {
       const result = transfer.data.data.attribute;
       
       if (result.response.message === 'OTP needed!') {
-        navigation.navigate('TransferOtp', { data: result, item });
+        navigation.navigate('TransferOtp', { data: result, item: selectedItemData });
       } else {
         Alert.alert('Success', 'Points transferred successfully!');
         setPhone('');
         setAmount('');
         setSelectedItem(null);
+        refreshData();
       }
     } catch (error) {
       console.error('Transfer error:', error);
-      setError(error);
-      
-      let errorMessage = 'Failed to transfer points';
-      if (error.response) {
-        if (error.response.data && error.response.data.message) {
-          errorMessage = error.response.data.message;
-        } else if (error.response.status === 401) {
-          errorMessage = 'Authentication failed. Please try again.';
-        } else if (error.response.status === 400) {
-          errorMessage = 'Invalid request. Please check your inputs.';
-        }
-      } else if (error.request) {
-        errorMessage = 'Network error. Please check your connection.';
-      }
-
-      Alert.alert('Error', errorMessage);
-    } finally {
-      setIsLoading(false);
+      const errorMsg = error.response?.data?.errors?.message || error.message;
+      Alert.alert('Error', errorMsg || 'Failed to transfer points');
     }
   };
 
@@ -138,21 +184,10 @@ useEffect(() => {
     setSelectedItem(selectedItem === index ? null : index);
   };
 
-  // UserContext မှရရှိသော userData ကိုသုံးမည်
-  const sortedData = userData
-    .sort((a, b) => Number(b.totalPoint) - Number(a.totalPoint));
-
-  const isTransferDisabled = !phone || !amount || selectedItem === null || isLoading;
+  const isTransferDisabled = !phone || !amount || selectedItem === null || loadingState.isLoading;
 
   return (
     <LinearGradient colors={['#f5f7fa', '#e4e8f0']} style={styles.container}>
-      {/* Header Section */}
-      <View style={styles.header}>
-        <Icon name="swap-horiz" size={30} color="#0a34cc" style={styles.headerIcon} />
-        <Text style={styles.title}>Transfer Points</Text>
-        <Text style={styles.subtitle}>Select an account to transfer from</Text>
-      </View>
-
       {/* Transfer Form */}
       <View style={styles.formCard}>
         <View style={styles.inputContainer}>
@@ -164,7 +199,7 @@ useEffect(() => {
             value={phone}
             onChangeText={setPhone}
             keyboardType="phone-pad"
-            editable={!isLoading}
+            editable={!loadingState.isLoading}
           />
         </View>
 
@@ -177,7 +212,7 @@ useEffect(() => {
             value={amount}
             onChangeText={setAmount}
             keyboardType="numeric"
-            editable={!isLoading}
+            editable={!loadingState.isLoading}
           />
         </View>
 
@@ -190,7 +225,7 @@ useEffect(() => {
             colors={isTransferDisabled ? ['#ccc', '#aaa'] : ['#0a34cc', '#1a4bdf']}
             style={styles.buttonGradient}
           >
-            {isLoading ? (
+            {loadingState.isLoading ? (
               <ActivityIndicator color="white" />
             ) : (
               <>
@@ -202,42 +237,98 @@ useEffect(() => {
         </TouchableOpacity>
       </View>
 
+      {/* Search */}
+      <View style={styles.searchInputContainer}>
+        <Icon name="search" size={20} color="#0a34cc" style={styles.searchIcon} />
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Search accounts..."
+          placeholderTextColor="#999"
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+        />
+      </View>
+
+      {/* Accounts List Header */}
+      <View style={styles.listHeader}>
+        <Text style={styles.sectionTitle}>
+          {showAll ? 'All Accounts' : 'Accounts With Points'} ({filteredData.length})
+        </Text>
+        <TouchableOpacity onPress={toggleShowAll} style={styles.showAllButton}>
+          <Text style={styles.showAllButtonText}>
+            {showAll ? 'Show Less' : 'Show All'}
+          </Text>
+        </TouchableOpacity>
+      </View>
+      
       {/* Accounts List */}
-      <Text style={styles.sectionTitle}>Available Accounts</Text>
-      {isLoading ? (
+      {(loadingState.isLoading || isLoadingLocal) && !isRefreshing ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#0a34cc" />
-          <Text style={styles.loadingText}>Processing transfer...</Text>
+          <Text style={styles.loadingText}>{loadingState.progress?.message || 'Loading accounts...'}</Text>
+        </View>
+      ) : filteredData.length === 0 ? (
+        <View style={styles.emptyContainer}>
+          <Icon name="info-outline" size={40} color="#999" />
+          <Text style={styles.emptyText}>
+            {searchQuery ? 'No matching accounts found' : showAll ? 'No accounts available' : 'No accounts with points'}
+          </Text>
         </View>
       ) : (
         <FlatList
-          data={sortedData}
-          keyExtractor={(item, index) => index.toString()}
+          data={filteredData}
+          keyExtractor={(item, index) => `${item.user_id || 'local'}_${index}`}
           contentContainerStyle={styles.listContent}
+          onEndReached={() => hasMore && !isLoadingMore && loadMore()}
+          onEndReachedThreshold={0.5}
+          refreshing={isRefreshing}
+          onRefresh={() => {
+            refreshData();
+            loadLocalData();
+          }}
+          ListFooterComponent={
+            isLoadingMore ? (
+              <View style={styles.footerLoading}>
+                <ActivityIndicator size="small" color="#0a34cc" />
+              </View>
+            ) : null
+          }
           renderItem={({ item, index }) => (
             <TouchableOpacity
               style={[
                 styles.card,
-                selectedItem === index && styles.selectedCard
+                selectedItem === index && styles.selectedCard,
+                (item.totalPoint || 0) === 0 && styles.zeroPointsCard,
+                item.isLocal && styles.localCard
               ]}
-              onPress={() => !isLoading && toggleSelectItem(index)}
-              disabled={isLoading}
+              onPress={() => (item.totalPoint || 0) > 0 && !item.isLocal && toggleSelectItem(index)}
+              disabled={(item.totalPoint || 0) === 0 || item.isLocal}
             >
               <View style={styles.cardHeader}>
                 <CheckBox
                   value={selectedItem === index}
-                  onValueChange={() => toggleSelectItem(index)}
+                  onValueChange={() => (item.totalPoint || 0) > 0 && !item.isLocal && toggleSelectItem(index)}
+                  disabled={(item.totalPoint || 0) === 0 || item.isLocal}
                   boxType="circle"
-                  tintColor="#0a34cc"
+                  tintColor={(item.totalPoint || 0) === 0 || item.isLocal ? "#ccc" : "#0a34cc"}
                   onCheckColor="#0a34cc"
                   onFillColor="#0a34cc"
                   onTintColor="#0a34cc"
                   style={styles.checkbox}
-                  disabled={isLoading}
                 />
                 <View style={styles.phoneContainer}>
-                  <Icon name="sim-card" size={18} color="#0a34cc" />
-                  <Text style={styles.phoneText}>{item?.msisdn}</Text>
+                  <Icon 
+                    name="sim-card" 
+                    size={18} 
+                    color={item.isLocal ? "#888" : ((item.totalPoint || 0) === 0 ? "#ccc" : "#0a34cc")} 
+                  />
+                  <Text style={[
+                    styles.phoneText, 
+                    (item.totalPoint || 0) === 0 && styles.zeroPointsText,
+                    item.isLocal && styles.localText
+                  ]}>
+                    {item.msisdn} {item.isLocal && '(Local)'}
+                  </Text>
                 </View>
               </View>
 
@@ -246,15 +337,21 @@ useEffect(() => {
                   <Icon name="account-balance-wallet" size={16} color="#4caf50" />
                   <Text style={styles.detailLabel}>Balance:</Text>
                   <Text style={styles.detailValue}>
-                    {item?.mainBalance?.availableTotalBalance} {item?.mainBalance?.currency}
+                    {item.mainBalance?.availableTotalBalance || 0} {item.mainBalance?.currency || 'Ks'}
                   </Text>
                 </View>
 
                 <View style={styles.detailRow}>
-                  <Icon name="star" size={16} color="#ffd700" />
-                  <Text style={styles.detailLabel}>Points:</Text>
-                  <Text style={[styles.detailValue, { color: '#0a34cc' }]}>
-                    {item?.totalPoint}
+                  <Icon 
+                    name="star" 
+                    size={16} 
+                    color={item.isLocal ? "#888" : ((item.totalPoint || 0) === 0 ? "#ccc" : "#ffd700")} 
+                  />
+                  <Text style={[
+                    styles.detailValue, 
+                    { color: item.isLocal ? "#888" : ((item.totalPoint || 0) === 0 ? "#999" : "#0a34cc") }
+                  ]}>
+                    {item.totalPoint || 0}
                   </Text>
                 </View>
               </View>
@@ -266,31 +363,10 @@ useEffect(() => {
   );
 };
 
-
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     padding: 20,
-  },
-  header: {
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  headerIcon: {
-    backgroundColor: 'rgba(10, 52, 204, 0.1)',
-    padding: 15,
-    borderRadius: 50,
-    marginBottom: 10,
-  },
-  title: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#0a34cc',
-    marginBottom: 5,
-  },
-  subtitle: {
-    fontSize: 14,
-    color: '#666',
   },
   formCard: {
     backgroundColor: 'white',
@@ -298,10 +374,6 @@ const styles = StyleSheet.create({
     padding: 20,
     marginBottom: 20,
     elevation: 3,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
   },
   inputContainer: {
     flexDirection: 'row',
@@ -341,12 +413,46 @@ const styles = StyleSheet.create({
   buttonDisabled: {
     opacity: 0.7,
   },
+  searchInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'white',
+    borderRadius: 10,
+    paddingHorizontal: 15,
+    marginBottom: 15,
+    elevation: 2,
+  },
+  searchIcon: {
+    marginRight: 10,
+  },
+  searchInput: {
+    flex: 1,
+    height: 45,
+    fontSize: 14,
+    color: '#333',
+  },
+  listHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 15,
+    marginLeft: 5,
+  },
   sectionTitle: {
     fontSize: 16,
     fontWeight: '600',
     color: '#333',
-    marginBottom: 15,
-    marginLeft: 5,
+  },
+  showAllButton: {
+    backgroundColor: '#0a34cc',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 15,
+  },
+  showAllButtonText: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '500',
   },
   listContent: {
     paddingBottom: 20,
@@ -363,6 +469,13 @@ const styles = StyleSheet.create({
   selectedCard: {
     borderColor: '#0a34cc',
     backgroundColor: 'rgba(10, 52, 204, 0.05)',
+  },
+  zeroPointsCard: {
+    opacity: 0.7,
+  },
+  localCard: {
+    borderColor: '#888',
+    backgroundColor: 'rgba(136, 136, 136, 0.05)',
   },
   cardHeader: {
     flexDirection: 'row',
@@ -383,6 +496,12 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#333',
     marginLeft: 8,
+  },
+  zeroPointsText: {
+    color: '#999',
+  },
+  localText: {
+    color: '#888',
   },
   cardDetails: {
     marginLeft: 30,
@@ -407,10 +526,28 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    padding: 40,
   },
   loadingText: {
     marginTop: 10,
     color: '#666',
+  },
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 40,
+  },
+  emptyText: {
+    marginTop: 15,
+    fontSize: 16,
+    color: '#666',
+    textAlign: 'center',
+  },
+  footerLoading: {
+    paddingVertical: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });
 

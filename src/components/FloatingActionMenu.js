@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { FAB } from 'react-native-elements';
-import { View, StyleSheet, ToastAndroid } from 'react-native';
+import { View, StyleSheet } from 'react-native';
 
-const FloatingActionMenu = ({ onRefresh, onTransfer, onClaimAll, toAddAccount }) => {
+const FloatingActionMenu = ({ onRefresh, onTransfer, onClaimAll, toAddAccount, onDeleteAllUserData, onCreateUser,onShowAll, toSoldSimInventory }) => {
   const [fabOpen, setFabOpen] = useState(false);
 
   return (
@@ -45,7 +45,34 @@ const FloatingActionMenu = ({ onRefresh, onTransfer, onClaimAll, toAddAccount })
             onPress={onClaimAll}
             size="small"
           />
-
+          <FAB
+            title="Show All"
+            icon={{ name: 'menu-open', color: 'white' }}
+            color="#4caf50"
+            onPress={onShowAll}
+            size="small"
+          />
+          <FAB
+            title="Sold SIM Inventory"
+            icon={{ name: 'menu-open', color: 'white' }}
+            color="#4caf50"
+            onPress={toSoldSimInventory}
+            size="small"
+          />
+          {/* <FAB
+            title="DeleteAllData"
+            icon={{ name: 'check-circle', color: 'white' }}
+            color="#4caf50"
+            onPress={onDeleteAllUserData}
+            size="small"
+          /> */}
+          {/* <FAB
+            title="Create User"
+            icon={{ name: 'group-add', color: 'white' }}
+            color="#9c27b0"
+            onPress={onCreateUser}
+            size="small"
+          /> */}
         </View>
       )}
     </>
@@ -62,7 +89,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: 20,
     bottom: 100,
-    gap: 12,
+    gap: 12, // Adjust spacing between FABs
   },
 });
 

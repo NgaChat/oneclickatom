@@ -1,21 +1,21 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { FlatList, StyleSheet, RefreshControl, View, Text, Alert } from 'react-native';
 import LinearGradient from 'react-native-linear-gradient';
-import { useDashboardData } from '../../hooks';
+import { useSoldSimInventory } from '../../hooks';
 import { deleteAllSqlData, getAllLocalSimData } from '../../services/service';
 import {
   AccountCard,
   FloatingActionMenu,
   LoadingModal,
   SearchBar,
-  SummaryCard,
+  SoldSimCard,
   useHeader
 } from '../../components';
 
 const BATCH_SIZE = 20;
 const LOAD_MORE_THRESHOLD = 0.5;
 
-const Dashboard = ({ navigation }) => {
+const SoldSimInventoryScreen = ({ navigation }) => {
   const [searchText, setSearchText] = useState('');
   const [localData, setLocalData] = useState([]);
   const [isLoadingLocal, setIsLoadingLocal] = useState(false);
@@ -24,18 +24,13 @@ const Dashboard = ({ navigation }) => {
     loadingState,
     data,
     fetchData,
-    loadMore,
     refreshData,
-    hasMore,
     isRefreshing,
-    isLoadingMore,
     deleteSimData,
-    claimAllPoints,
-    fetchAllData,
-    syncFirebaseToLocal,
-  } = useDashboardData();
+ 
+  } = useSoldSimInventory();
 
-  useHeader(navigation, 'Dashboard');
+  useHeader(navigation, 'Sold SIM Inventory');
 
   // Load local SIM data
   const loadLocalData = useCallback(async () => {
@@ -55,15 +50,15 @@ const Dashboard = ({ navigation }) => {
   useEffect(() => {
     const initialize = async () => {
       try {
-        await syncFirebaseToLocal();
+        // await syncFirebaseToLocal();
         await fetchData();
-        await loadLocalData();
+        // await loadLocalData();
       } catch (error) {
         console.error('Initialization error:', error);
       }
     };
     initialize();
-  }, [fetchData, syncFirebaseToLocal, loadLocalData]);
+  }, [fetchData, loadLocalData]);
 
   // Combined refresh function
   const handleRefresh = useCallback(async () => {
@@ -112,32 +107,19 @@ const Dashboard = ({ navigation }) => {
 
   // Render each account item
   const renderItem = useCallback(({ item }) => (
-    <AccountCard
+    <SoldSimCard
       item={item}
       onDelete={() => deleteSimData(item.user_id)}
       isLocal={item.isLocal} // Pass local flag to card
     />
   ), [deleteSimData]);
 
-  // Handle load more
-  const handleLoadMore = useCallback(() => {
-    if (hasMore && !isLoadingMore && !loadingState.isLoading) {
-      loadMore();
-    }
-  }, [hasMore, isLoadingMore, loadMore, loadingState]);
+
 
   // Combined loading states
   const isLoading = loadingState.isLoading || isRefreshing || isLoadingLocal;
 
-  const handleShowAll = useCallback(async () => {
-    try {
-      await fetchAllData();
-      await loadLocalData();
-    } catch (error) {
-      console.error('Error showing all accounts:', error);
-      Alert.alert('Error', 'Failed to load all accounts');
-    }
-  }, [fetchAllData, loadLocalData]);
+
 
   // Delete all user data with confirmation
   const onDeleteAllUserData = useCallback(() => {
@@ -173,7 +155,6 @@ const Dashboard = ({ navigation }) => {
         progress={loadingState.progress}
       />
 
-      <SummaryCard data={filteredData} />
 
       <SearchBar
         value={searchText}
@@ -191,7 +172,7 @@ const Dashboard = ({ navigation }) => {
         initialNumToRender={BATCH_SIZE}
         maxToRenderPerBatch={BATCH_SIZE}
         windowSize={5}
-        onEndReached={handleLoadMore}
+        // onEndReached={handleLoadMore}
         onEndReachedThreshold={LOAD_MORE_THRESHOLD}
         removeClippedSubviews={true}
         refreshControl={
@@ -202,13 +183,13 @@ const Dashboard = ({ navigation }) => {
             tintColor="#1890ff"
           />
         }
-        ListFooterComponent={
-          (isLoadingMore || isLoadingLocal) ? (
-            <View style={styles.footerLoading}>
-              <LoadingModal visible={true} small />
-            </View>
-          ) : null
-        }
+        // ListFooterComponent={
+        //   (isLoadingMore || isLoadingLocal) ? (
+        //     <View style={styles.footerLoading}>
+        //       <LoadingModal visible={true} small />
+        //     </View>
+        //   ) : null
+        // }
         ListEmptyComponent={
           !isLoading && filteredData.length === 0 ? (
             <View style={styles.emptyContainer}>
@@ -220,16 +201,7 @@ const Dashboard = ({ navigation }) => {
         }
       />
 
-      <FloatingActionMenu
-        toAddAccount={() => navigation.navigate('AddAccount')}
-        onClaimAll={() => claimAllPoints()}
-        onRefresh={handleRefresh}
-        onTransfer={() => navigation.navigate('TransferPoint')}
-        onDeleteAllUserData={onDeleteAllUserData}
-        onShowAll={handleShowAll}
-        onCreateUser={() => navigation.navigate('CreateUser')}
-        toSoldSimInventory={() => navigation.navigate('SoldSimInventory')}
-      />
+     
     </LinearGradient>
   );
 };
@@ -261,4 +233,4 @@ const styles = StyleSheet.create({
   },
 });
 
-export default Dashboard;
+export default SoldSimInventoryScreen;

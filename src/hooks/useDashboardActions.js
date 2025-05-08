@@ -1,10 +1,12 @@
 import { useCallback } from 'react';
 import axios from 'axios';
 import { Alert } from 'react-native';
-import { refreshAccessToken, getCommonHeaders } from '../services/service';
+import { getUser, getCommonHeaders, deleteSimItem } from '../services/service';
+import { database } from '../config/firebase';
+import { ref, set, get } from 'firebase/database';
 
 export const useDashboardActions = (data, updateUserData, setData) => {
-  const handleDelete = useCallback((userId) => {
+  const handleDelete = useCallback((id) => {
     Alert.alert(
       'Confirm Delete',
       'Are you sure you want to delete this account?',
@@ -12,10 +14,19 @@ export const useDashboardActions = (data, updateUserData, setData) => {
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Delete',
-          onPress: () => {
-            const updatedData = data.filter(item => item.user_id !== userId);
-            updateUserData(updatedData);
-            setData(updatedData); // update local state for immediate UI update
+          onPress: async () => {
+
+
+
+            const result = await deleteSimItem(id);
+  
+            if (result.success) {
+              console.log('Deleted successfully. New data:', result.newData);
+              // Update your UI with the new data
+            } else {
+              console.error('Delete failed:', result.message);
+              // Show error to user
+            }
           },
         },
       ]
@@ -24,7 +35,7 @@ export const useDashboardActions = (data, updateUserData, setData) => {
 
   const claimAllPoints = useCallback(async () => {
     if (!data.length) return;
-    
+
     try {
       const results = await Promise.all(
         data.map(async (item) => {

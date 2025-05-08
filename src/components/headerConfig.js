@@ -3,7 +3,7 @@ import { useLayoutEffect } from 'react';
 const useHeader = (navigation, title) => {
   useLayoutEffect(() => {
     navigation.setOptions({
-      headerTitle: title, // ← params ကနေ ယူသွားမယ်
+      headerTitle: title,
       headerTitleAlign: 'center',
       headerStyle: { backgroundColor: '#0a34cc' },
       headerTintColor: 'white',
