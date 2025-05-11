@@ -1,17 +1,20 @@
 import React, { memo, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Modal, Alert } from 'react-native';
 import Icon from './Icon';
-import { AlertContext } from '../utils/alertUtils'; // Make sure this path is correct
-import {markSimAsSold} from '../services/service'
+import { AlertContext } from '../utils/alertUtils';
+import { markSimAsSold } from '../services/service';
 
-const AccountCard = ({ item, onDelete }) => {
+const AccountCard = ({ item, onDelete, onClaimPoints }) => {
   const [modalVisible, setModalVisible] = useState(false);
   const [selectedAction, setSelectedAction] = useState(null);
-  const { showAlert } = React.useContext(AlertContext); // Use the context to show alerts
+  const { showAlert } = React.useContext(AlertContext);
+
+  // Determine if claim button should be enabled
+  const isClaimable = item?.label === 'Claim' && item?.points?.enable;
+  const claimButtonStyle = isClaimable ? styles.claimButton : styles.claimButtonDisabled;
 
   const handleSellPress = () => {
     setSelectedAction('sell');
-    
     setModalVisible(true);
   };
 
@@ -20,33 +23,39 @@ const AccountCard = ({ item, onDelete }) => {
     setModalVisible(true);
   };
 
+  const handleClaimPress = () => {
+    if (isClaimable) {
+      onClaimPoints(item);
+    }
+  };
+
   const handleConfirm = () => {
     setModalVisible(false);
     if (selectedAction === 'delete') {
       onDelete(item.user_id);
       showAlert({ 
         title: '', 
-        message: 'Successfully deleted!' ,
-        type :'success'
+        message: 'Successfully deleted!',
+        type: 'success'
+      });
+    } else {
+      markSimAsSold(item);
+      showAlert({ 
+        title: 'Successfully Sold', 
+        message: 'See you in the sold inventory!',
+        type: 'success'
       });
     }
-
-    markSimAsSold(item)
-    showAlert({ 
-      title: 'Successfully Sold', 
-      message: 'See you in the sold inventory!' ,
-      type :'success'
-    });
   };
 
   const handleDeleteAndSell = () => {
     setModalVisible(false);
     onDelete(item.user_id);
-   markSimAsSold(item)
+    markSimAsSold(item);
     showAlert({ 
       title: 'Sell and Delete', 
       message: 'Sell and delete operation completed successfully!', 
-      type :'success'
+      type: 'success'
     });
   };
 
@@ -82,7 +91,7 @@ const AccountCard = ({ item, onDelete }) => {
                 style={[styles.modalButton, styles.confirmButton]}
                 onPress={handleConfirm}
               >
-                <Text style={styles.buttonText}>Sell</Text>
+                <Text style={styles.buttonText}>Delete</Text>
               </TouchableOpacity>
               
               {selectedAction === 'sell' && (
@@ -104,9 +113,9 @@ const AccountCard = ({ item, onDelete }) => {
           <Text style={styles.phoneText}>{item?.msisdn}</Text>
         </View>
         <View style={styles.actionButtons}>
-          <TouchableOpacity onPress={handleSellPress} style={styles.sellButton}>
+          {/* <TouchableOpacity onPress={handleSellPress} style={styles.sellButton}>
             <Icon name="sell" size={22} color="#4CAF50" type="MaterialIcons" />
-          </TouchableOpacity>
+          </TouchableOpacity> */}
           <TouchableOpacity onPress={handleDeletePress}>
             <Icon name="trash-can-outline" size={22} color="#f44336" type="MaterialCommunityIcons" />
           </TouchableOpacity>
@@ -131,9 +140,9 @@ const AccountCard = ({ item, onDelete }) => {
         </View>
       </View>
 
-      {/* Show either the existing label or session error label */}
-      {(item?.label || item?.errorLabel === 'SESSION_EXPIRED') && (
-        <View style={styles.statusContainer}>
+      {/* Claim button and status badge */}
+      <View style={styles.bottomRow}>
+        {(item?.label || item?.errorLabel === 'SESSION_EXPIRED') && (
           <View
             style={[
               styles.statusBadge,
@@ -146,13 +155,22 @@ const AccountCard = ({ item, onDelete }) => {
               {item.errorLabel === 'SESSION_EXPIRED' ? 'Invalid Session' : item.label}
             </Text>
           </View>
-        </View>
-      )}
+        )}
+        
+        <TouchableOpacity 
+          style={claimButtonStyle}
+          onPress={handleClaimPress}
+          disabled={!isClaimable}
+        >
+          <Text style={styles.claimButtonText}>Claim Points</Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 };
 
 export default memo(AccountCard);
+
 
 const styles = StyleSheet.create({
   card: {
@@ -305,5 +323,32 @@ const styles = StyleSheet.create({
   buttonText: {
     color: 'white',
     fontWeight: 'bold',
+  },
+  bottomRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  claimButton: {
+    backgroundColor: '#4CAF50',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  claimButtonDisabled: {
+    backgroundColor: '#cccccc',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  claimButtonText: {
+    color: 'white',
+    fontWeight: 'bold',
+    fontSize: 14,
   },
 });

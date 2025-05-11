@@ -32,83 +32,48 @@ const Dashboard = ({ navigation }) => {
     deleteSimData,
     claimAllPoints,
     fetchAllData,
-    syncFirebaseToLocal,
+    claimSinglePoints
   } = useDashboardData();
 
   useHeader(navigation, 'Dashboard');
 
-  // Load local SIM data
-  const loadLocalData = useCallback(async () => {
-    try {
-      setIsLoadingLocal(true);
-      const localSimData = await getAllLocalSimData();
-      setLocalData(localSimData);
-    } catch (error) {
-      console.error('Failed to load local SIM data:', error);
-      // Alert.alert('Error', 'Failed to load local data');
-    } finally {
-      setIsLoadingLocal(false);
-    }
-  }, []);
+
 
   // Combined initial data loading
   useEffect(() => {
     const initialize = async () => {
       try {
-        await syncFirebaseToLocal();
         await fetchData();
-        await loadLocalData();
+        
       } catch (error) {
         console.error('Initialization error:', error);
       }
     };
     initialize();
-  }, [fetchData, syncFirebaseToLocal, loadLocalData]);
+  }, [fetchData]);
 
   // Combined refresh function
   const handleRefresh = useCallback(async () => {
     try {
       await refreshData();
-      await loadLocalData();
     } catch (error) {
       console.error('Refresh error:', error);
     }
-  }, [refreshData, loadLocalData]);
+  }, [refreshData]);
 
-  // Combine and deduplicate data
-  const combinedData = useMemo(() => {
-    // Merge remote and local data, giving priority to remote data
-    const remoteItems = data || [];
-    const localItems = localData || [];
-    
-    const combined = [...remoteItems];
-    
-    localItems.forEach(localItem => {
-      const exists = remoteItems.some(remoteItem => 
-        remoteItem.msisdn === localItem.msisdn
-      );
-      if (!exists) {
-        combined.push({
-          ...localItem,
-          isLocal: true // Flag to identify local-only items
-        });
-      }
-    });
-    
-    return combined;
-  }, [data, localData]);
+
 
   // Filter data based on search text
   const filteredData = useMemo(() => {
-    if (!searchText) return combinedData;
+    if (!searchText) return data;
 
     const lowerCaseSearch = searchText.toLowerCase();
-    return combinedData.filter(item =>
+    return data.filter(item =>
       item.msisdn.includes(searchText) ||
       (item.name && item.name.toLowerCase().includes(lowerCaseSearch)) ||
       (item.user_id && item.user_id.toString().includes(searchText))
     );
-  }, [combinedData, searchText]);
+  }, [data, searchText]);
 
   // Render each account item
   const renderItem = useCallback(({ item }) => (
@@ -116,6 +81,13 @@ const Dashboard = ({ navigation }) => {
       item={item}
       onDelete={() => deleteSimData(item.user_id)}
       isLocal={item.isLocal} // Pass local flag to card
+      onClaimPoints={async () => {
+        try {
+          await claimSinglePoints(item);
+        } catch (error) {
+          console.error('Claim points error:', error);
+        }
+      }}
     />
   ), [deleteSimData]);
 
@@ -132,12 +104,11 @@ const Dashboard = ({ navigation }) => {
   const handleShowAll = useCallback(async () => {
     try {
       await fetchAllData();
-      await loadLocalData();
     } catch (error) {
       console.error('Error showing all accounts:', error);
       Alert.alert('Error', 'Failed to load all accounts');
     }
-  }, [fetchAllData, loadLocalData]);
+  }, [fetchAllData]);
 
   // Delete all user data with confirmation
   const onDeleteAllUserData = useCallback(() => {
@@ -153,7 +124,6 @@ const Dashboard = ({ navigation }) => {
             try {
               await deleteAllSqlData();
               await refreshData();
-              await loadLocalData();
               Alert.alert('Success', 'All data has been deleted');
             } catch (error) {
               console.error('Deletion error:', error);
@@ -164,7 +134,7 @@ const Dashboard = ({ navigation }) => {
       ],
       { cancelable: true }
     );
-  }, [deleteAllSqlData, refreshData, loadLocalData]);
+  }, [deleteAllSqlData, refreshData, ]);
 
   return (
     <LinearGradient colors={['#f5f7fa', '#e4e8f0']} style={styles.container}>

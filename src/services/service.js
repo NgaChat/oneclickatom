@@ -1,722 +1,591 @@
 import axios from 'axios';
 import DeviceInfo from 'react-native-device-info';
-import { database } from '../config/firebase';
-import { ref, set, get, onValue } from 'firebase/database';
+import { ref, set, get } from 'firebase/database';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import SQLite from 'react-native-sqlite-storage';
+import { database } from '../config/firebase';
 
-// Open or create the SQLite database
-const db = SQLite.openDatabase({ name: 'SimData.db', location: 'default' });
+// ======================
+// Constants & Configuration
+// ======================
+const DB_CONFIG = {
+  name: 'SimData.db',
+  location: 'default',
+  version: '1.3'
+};
 
-// Initialize the database table
+const API_CONFIG = {
+  baseUrl: 'https://store.atom.com.mm/mytmapi',
+  version: '4.11',
+  endpoints: {
+    refreshToken: '/v3/my/oauth/refresh-token',
+    dashboard: '/v1/my/dashboard?isFirstTime=1',
+    pointDashboard: '/v1/my/point-system/dashboard',
+    balance: '/v1/my/lightweight-balance',
+    claimList: '/v1/my/point-system/claim-list',
+    claim: '/v1/my/point-system/claim'
+  }
+};
+
+const USER_AGENT = 'MyTM/4.11.1/Android/35';
+const DEFAULT_PAGE_SIZE = 10;
+
+// ======================
+// Database Initialization
+// ======================
+const db = SQLite.openDatabase(
+  DB_CONFIG,
+  () => console.log('Database connection established'),
+  error => console.error('Database opening error:', error)
+);
+
 export const initializeDatabase = () => {
-  db.transaction((tx) => {
-    tx.executeSql(
-      'CREATE TABLE IF NOT EXISTS SimData (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT UNIQUE, data TEXT)',
-      [],
-      () => console.log('SimData table created successfully'),
-      (error) => console.error('Error creating SimData table:', error)
-    );
-
-    tx.executeSql(
-      'CREATE TABLE IF NOT EXISTS SoldSimInventory (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT UNIQUE, data TEXT, sold_at TEXT)',
-      [],
-      () => {
-        console.log('SoldSimInventory table ready');
-        resolve();
-      },
-      (error) => {
-        console.error('SoldSimInventory table error:', error);
-        reject(error);
-      }
-    );
-  });
-
-  
-};
-
-// Common headers generator
-export const getCommonHeaders = async (token) => {
-  const userAgent = 'MyTM/4.11.1/Android/35';
-  const deviceName = await DeviceInfo.getDeviceName() || DeviceInfo.getModel();
-  const today = new Date().toUTCString();
-
-  return {
-    Authorization: `Bearer ${token}`,
-    'Content-Type': 'application/json; charset=UTF-8',
-    Connection: 'Keep-Alive',
-    'Accept-Encoding': 'gzip',
-    'X-Server-Select': 'production',
-    'User-Agent': userAgent,
-    'Device-Name': deviceName,
-    'If-Modified-Since': today,
-    Host: 'store.atom.com.mm'
-  };
-};
-
-export const refreshAccessToken = async (item, forceRefresh = false) => {
-  try {
-    const currentTimeInSeconds = Math.floor(Date.now() / 1000);
-    const fiveMinutesInSeconds = 5 * 60; // 5 minutes
-
-    console.log(`[${item.msisdn}] Checking token expiry...`);
-
-    // Skip refresh if not forced and token is still valid
-    if (!forceRefresh && item.access_token_expire_at - currentTimeInSeconds > fiveMinutesInSeconds) {
-      console.log(`[${item.msisdn}] Token still valid (expires in more than 5 minutes)`);
-      return item;
-    }
-
-    console.log(`[${item.msisdn}] Refreshing token...`);
-
-    const headers = await getCommonHeaders(item.access_token);
-    const response = await axios.post(
-      'https://store.atom.com.mm/mytmapi/v3/my/oauth/refresh-token',
-      { refresh_token: item.refresh_token },
-      {
-        params: {
-          msisdn: item.msisdn,
-          userid: item.user_id,
-          v: '4.11'
-        },
-        headers,
-      }
-    );
-
-    const attributes = response.data?.data?.attribute;
-    if (!attributes) {
-      throw new Error('Invalid refresh token response');
-    }
-
-    console.log(`[${item.msisdn}] Token refresh successful`);
-
-    // Overwrite only if new refresh_token is provided
-    const updatedItem = {
-      ...item,
-      ...attributes,
-      hasError: false, // Reset error flag if refresh was successful
-      errorMessage: null, // Clear error message
-      errorLabel: null // Clear error label
-    };
-
-    if (attributes.refresh_token) {
-      updatedItem.refresh_token = attributes.refresh_token;
-      updatedItem.refresh_token_expire_at = attributes.refresh_token_expire_at;
-    }
-
-    return updatedItem;
-
-  } catch (error) {
-    const errorMsg = error.response?.data?.errors?.message || error.message;
-    console.error(`[${item.msisdn}] Refresh token failed: ${errorMsg}`);
-
-    if (errorMsg === "Invalid refresh token") {
-      console.error(`[${item.msisdn}] Invalid refresh token detected — consider forcing logout or account cleanup`);
-      // Add error information to the item for UI display
-      return {
-        ...item,
-        hasError: true,
-        errorMessage: 'Session expired — please log in again.',
-        errorLabel: 'SESSION_EXPIRED' // This label can be used in UI to show specific styling/message
-      };
-    }
-
-    // For other errors, you might want to add different labels
-    return {
-      ...item,
-      hasError: true,
-      errorMessage: 'Token refresh failed',
-      errorLabel: 'REFRESH_FAILED'
-    };
-  }
-};
-
-
-export const getBasicHeaders = async () => {
-  const userAgent = 'MyTM/4.11.1/Android/35';
-  const deviceName = await DeviceInfo.getDeviceName() || DeviceInfo.getModel();
-  const today = new Date().toUTCString();
-
-  return {
-    'Content-Type': 'application/json; charset=UTF-8',
-    Connection: 'Keep-Alive',
-    'Accept-Encoding': 'gzip',
-    'X-Server-Select': 'production',
-    'User-Agent': userAgent,
-    'Device-Name': deviceName,
-    'If-Modified-Since': today,
-    Host: 'store.atom.com.mm'
-  };
-};
-
-
-export const getUser = async () => {
-  try {
-    const storedUser = await AsyncStorage.getItem('user');
-    if (storedUser) {
-      return JSON.parse(storedUser);
-    } else {
-      console.error('No user found in AsyncStorage');
-      return null;
-    }
-  } catch (error) {
-    console.error('Error getting user from AsyncStorage:', error);
-    return null;
-  }
-}
-
-export const saveFirebaseSimData = async (item) => {
-  try {
-    const storedUser = await AsyncStorage.getItem('user');
-    if (!storedUser) {
-      console.error('No user found in AsyncStorage');
-      return;
-    }
-
-    const user = JSON.parse(storedUser);
-    const userId = user.id; // Assuming the user ID is stored in the user object
-
-    // Reference to the user's data in Firebase
-    const dataRef = ref(database, `users/${userId}/data`);
-    const snapshot = await get(dataRef);
-
-    let dataArray = [];
-
-    if (snapshot.exists()) {
-      const currentData = snapshot.val();
-
-      // Check if currentData is an array or object
-      if (Array.isArray(currentData)) {
-        dataArray = [...currentData];
-      } else if (typeof currentData === 'object') {
-        dataArray = Object.values(currentData); // Convert object to array
-      }
-    }
-
-    // Check if the item already exists in the array
-    const existingIndex = dataArray.findIndex((dataItem) => dataItem.user_id === item.user_id);
-
-    if (existingIndex !== -1) {
-      // Update the existing item
-      dataArray[existingIndex] = item;
-      console.log(`Updated existing item in Firebase with user_id: ${item.user_id}`);
-    } else {
-      // Add the new item
-      dataArray.push(item);
-      console.log(`Added new item to Firebase with user_id: ${item.user_id}`);
-    }
-
-    // Save the updated array back to Firebase
-    await set(dataRef, dataArray);
-    console.log('SIM data updated successfully in Firebase');
-  } catch (error) {
-    console.error('Error updating SIM data in Firebase:', error);
-  }
-};
-
-export const getFirebaseSimData = async () => {
-  try {
-    // Get the current user from AsyncStorage
-    const storedUser = await AsyncStorage.getItem('user');
-    const user = storedUser ? JSON.parse(storedUser) : null;
-
-    if (!user || !user.id) {
-      console.error('User not found or missing user ID');
-      return null;
-    }
-
-    // Reference to the user's data in Firebase
-    const dataRef = ref(database, `users/${user.id}/data`);
-    const snapshot = await get(dataRef);
-
-
-    if (snapshot.exists()) {
-      return snapshot.val(); // Return the data if it exists
-    } else {
-      console.log('No SIM data found for user');
-      return null;
-    }
-  } catch (error) {
-    console.error('Error fetching SIM data:', error);
-    throw error; // Rethrow the error for the caller to handle
-  }
-};
-
-export const deleteFirebaseSimItem = async (id) => {
-  try {
-    // 1. Get current user
-    const user = await getUser();
-
-    if (!user || !user.id) {
-      console.error('User not found or missing user ID');
-      return { success: false, message: 'User not found' };
-    }
-
-    // 2. Get current SIM data from Firebase
-    const dataRef = ref(database, `users/${user.id}/data`);
-    const snapshot = await get(dataRef);
-
-    if (!snapshot.exists()) {
-      console.error('No SIM data found for user');
-      return { success: false, message: 'No SIM data found' };
-    }
-
-    const currentData = snapshot.val();
-
-    // 3. Check if data is an array (handle both array and object formats)
-    let dataArray = [];
-    if (Array.isArray(currentData)) {
-      dataArray = [...currentData];
-    } else if (typeof currentData === 'object') {
-      // Convert object to array if needed
-      dataArray = Object.values(currentData);
-    }
-
-    // 4. Find the item by id
-    const itemIndex = dataArray.findIndex((item) => item.user_id === id);
-    if (itemIndex === -1) {
-      console.error('Item with the given ID not found');
-      return { success: false, message: 'Item not found' };
-    }
-
-    // 5. Remove item from array
-    dataArray.splice(itemIndex, 1);
-
-    // 6. Update data in Firebase
-    await set(dataRef, dataArray);
-
-    console.log(`Successfully deleted item with ID ${id}`);
-    return {
-      success: true,
-      message: 'Item deleted successfully',
-      newData: dataArray // Return updated array
-    };
-
-  } catch (error) {
-    console.error('Error deleting SIM item:', error);
-    return {
-      success: false,
-      message: error.message || 'Failed to delete item',
-      error: error
-    };
-  }
-};
-
-
-
-// Save SIM data to SQLite
-export const saveLocalSimData = async (item) => {
-  try {
-    if (!item) {
-      console.warn('No item provided to save');
-      return;
-    }
-
-    const dataString = JSON.stringify(item);
-
-    db.transaction((tx) => {
-      tx.executeSql(
-        'INSERT OR REPLACE INTO SimData (user_id, data) VALUES (?, ?)',
-        [item.user_id, dataString],
-        () => console.log(`SIM data saved for user_id: ${item.user_id}`),
-        (error) => console.error('Error saving SIM data to SQLite:', error)
-      );
-    });
-  } catch (error) {
-    console.error('Error saving SIM data to SQLite:', error);
-  }
-};
-
-// Get paginated SIM data from SQLite
-export const getLocalSimData = async (page = 1, pageSize = 5) => {
   return new Promise((resolve, reject) => {
-    const offset = (page - 1) * pageSize;
-
-    db.transaction((tx) => {
+    db.transaction(tx => {
+      // Create SimData table
       tx.executeSql(
-        `SELECT * FROM SimData LIMIT ? OFFSET ?`,
-        [pageSize, offset],
-        (tx, results) => {
-          const rows = results.rows;
-          const data = [];
-
-          for (let i = 0; i < rows.length; i++) {
-            const row = rows.item(i);
-            const parsedData = JSON.parse(row.data); // Parse JSON data
-            data.push(parsedData);
-          }
-
-          // Sort data by totalPoint in descending order
-          data.sort((a, b) => (b.totalPoint || 0) - (a.totalPoint || 0));
-
-          console.log(`Retrieved SIM data from SQLite (Page: ${page}):`, data.length);
-          resolve(data);
-        },
-        (error) => {
-          console.error('Error fetching paginated SIM data from SQLite:', error);
-          reject([]);
-        }
-      );
-    });
-  });
-};
-
-// Get all SIM data from SQLite
-export const getAllLocalSimData = async () => {
-  return new Promise((resolve, reject) => {
-    db.transaction((tx) => {
-      tx.executeSql(
-        'SELECT * FROM SimData', // Remove json_extract and fetch all data
+        `CREATE TABLE IF NOT EXISTS SimData (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id TEXT UNIQUE NOT NULL,
+          data TEXT NOT NULL,
+          last_updated TEXT DEFAULT CURRENT_TIMESTAMP
+        )`,
         [],
-        (tx, results) => {
-          const rows = results.rows;
-          const data = [];
+        () => console.log('SimData table verified'),
+        (_, error) => {
+          console.error('SimData table error:', error);
+          reject(error);
+        }
+      );
 
-          for (let i = 0; i < rows.length; i++) {
-            const row = rows.item(i);
-            const parsedData = JSON.parse(row.data); // Parse JSON data
-            data.push(parsedData);
-          }
-
-          // Sort data by totalPoint in descending order
-          data.sort((a, b) => (b.totalPoint || 0) - (a.totalPoint || 0));
-
-          console.log('Retrieved all SIM data from SQLite (Ordered by totalPoint):', data.length);
-          resolve(data);
+      // Create SoldSimInventory table
+      tx.executeSql(
+        `CREATE TABLE IF NOT EXISTS SoldSimInventory (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id TEXT UNIQUE NOT NULL,
+          data TEXT NOT NULL,
+          sold_at TEXT NOT NULL
+        )`,
+        [],
+        () => {
+          console.log('SoldSimInventory table verified');
+          createDatabaseIndexes().then(resolve).catch(reject);
         },
-        (error) => {
-          console.error('Error fetching all SIM data from SQLite:', error);
-          reject([]);
+        (_, error) => {
+          console.error('SoldSimInventory table error:', error);
+          reject(error);
         }
       );
     });
   });
 };
 
-// Delete SIM data by user_id
-export const deleteSimData = async (user_id) => {
+const createDatabaseIndexes = async () => {
   try {
     await new Promise((resolve, reject) => {
-      db.transaction((tx) => {
+      db.transaction(tx => {
         tx.executeSql(
-          'DELETE FROM SimData WHERE user_id = ?',
-          [user_id],
-          (tx, results) => {
-            if (results.rowsAffected > 0) {
-              console.log(`Successfully deleted SIM data for user_id: ${user_id}`);
-              resolve(results);
-            } else {
-              console.log(`No SIM data found for user_id: ${user_id}`);
-              reject(new Error('No records found to delete'));
-            }
+          'CREATE INDEX IF NOT EXISTS idx_simdata_user_id ON SimData(user_id)',
+          [],
+          () => {
+            console.log('Index on SimData(user_id) created');
+            resolve();
           },
-          (tx, error) => {
-            console.error('Database error:', error);
+          (_, error) => {
+            console.error('Index creation error:', error);
             reject(error);
           }
         );
       });
     });
-    return true; // Deletion successful
+
+    await new Promise((resolve, reject) => {
+      db.transaction(tx => {
+        tx.executeSql(
+          'CREATE INDEX IF NOT EXISTS idx_sold_inventory_sold_at ON SoldSimInventory(sold_at)',
+          [],
+          () => {
+            console.log('Index on SoldSimInventory(sold_at) created');
+            resolve();
+          },
+          (_, error) => {
+            console.error('Index creation error:', error);
+            reject(error);
+          }
+        );
+      });
+    });
   } catch (error) {
-    console.error('Failed to delete SIM data:', error);
-    throw error; // Re-throw for caller to handle
+    console.error('Database index creation failed:', error);
+    throw error;
   }
 };
 
-// Delete all SIM data from SQLite
-export const deleteAllSqlData = async () => {
-  return new Promise((resolve, reject) => {
-    db.transaction((tx) => {
-      tx.executeSql(
-        'DELETE FROM SimData', // SQL query to delete all rows
-        [],
-        () => {
-          console.log('All SIM data deleted successfully from SQLite');
-          resolve(true); // Resolve the promise on success
-        },
-        (error) => {
-          console.error('Error deleting all SIM data from SQLite:', error);
-          reject(error); // Reject the promise on error
-        }
-      );
-    });
-  });
+// ======================
+// Utility Functions
+// ======================
+export const getCommonHeaders = async (token = null) => {
+  try {
+    const deviceName = await DeviceInfo.getDeviceName() || DeviceInfo.getModel();
+    const today = new Date().toUTCString();
+
+    return {
+      'Content-Type': 'application/json; charset=UTF-8',
+      'User-Agent': USER_AGENT,
+      'Device-Name': deviceName,
+      'If-Modified-Since': today,
+      Host: 'store.atom.com.mm',
+      ...(token ? { Authorization: `Bearer ${token}` } : {})
+    };
+  } catch (error) {
+    console.error('Header generation error:', error);
+    throw error;
+  }
 };
 
-export const getAccountLimit = async () => {
+export const getBasicHeaders = async () => {
+  return getCommonHeaders(); // Reuse common headers without auth token
+};
+
+// ======================
+// Authentication Functions
+// ======================
+export const refreshAccessToken = async (item, forceRefresh = false) => {
+  const MAX_RETRIES = 3;
+  const BASE_DELAY = 1000;
+  let retryCount = 0;
+
+  const attemptRefresh = async () => {
+    try {
+      const currentTime = Math.floor(Date.now() / 1000);
+      const FIVE_MINUTES = 300;
+
+      if (!forceRefresh && item.access_token_expire_at - currentTime > FIVE_MINUTES) {
+        console.log('Access token is still valid, no refresh needed');
+        return item;
+      }
+
+      const headers = await getBasicHeaders();
+
+      console.log(item);
+      const response = await axios.post(
+        `${API_CONFIG.baseUrl}${API_CONFIG.endpoints.refreshToken}`,
+        { refresh_token: item.refresh_token },
+        {
+          params: {
+            msisdn: item.msisdn,
+            userid: item.user_id,
+            v: API_CONFIG.version
+          },
+          headers,
+          timeout: 10000
+        }
+      );
+
+      const attributes = response.data?.data?.attribute;
+      if (!attributes) {
+        throw new Error('Invalid refresh token response');
+      }
+
+      return {
+        ...item,
+        token: attributes.token,
+        access_token_expire_at: attributes.access_token_expire_at,
+        ...(attributes.refresh_token ? {
+          refresh_token: attributes.refresh_token,
+          refresh_token_expire_at: attributes.refresh_token_expire_at,
+          
+        } : {}),
+        hasError: false,
+        errorMessage: null,
+        errorLabel: null
+      };
+    } catch (error) {
+      retryCount++;
+      const errorMsg = error.response?.data?.errors?.message || error.message;
+      console.error('Token refresh error:', { error: errorMsg, retryCount });
+
+      if (retryCount < MAX_RETRIES && !errorMsg.includes('Invalid refresh token')) {
+        const delay = BASE_DELAY * Math.pow(2, retryCount);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return attemptRefresh();
+      }
+
+     
+      return {
+        ...item,
+        hasError: true,
+        errorMessage: errorMsg.includes('Invalid refresh token') 
+          ? 'Session expired - please log in again.' 
+          : 'Token refresh failed',
+        errorLabel: errorMsg.includes('Invalid refresh token') 
+          ? 'SESSION_EXPIRED' 
+          : 'REFRESH_FAILED'
+      };
+    }
+  };
+
+  return attemptRefresh();
+};
+
+export const getUser = async () => {
   try {
-    // Get the current user from AsyncStorage
     const storedUser = await AsyncStorage.getItem('user');
-    if (!storedUser) {
-      console.error('No user found in AsyncStorage');
-      return null; // Return null if no user is found
-    }
-
+    if (!storedUser) throw new Error('No user found in storage');
+    
     const user = JSON.parse(storedUser);
-    const userId = user.id; // Assuming the user ID is stored in the user object
-
-    if (!userId) {
-      console.error('User ID is missing');
-      return null; // Return null if user ID is missing
-    }
-
-    // Reference to the user's limitNumber in Firebase
-    const limitRef = ref(database, `users/${userId}/limitAccount`);
-    const snapshot = await get(limitRef);
-
-    if (snapshot.exists()) {
-      const limitNumber = snapshot.val(); // Get the value of limitNumber
-      console.log(`Limit number for user_id ${userId}:`, limitNumber);
-      return limitNumber; // Return the limitNumber
-    } else {
-      console.warn(`No limitNumber found for user_id ${userId}`);
-      return null; // Return null if limitNumber does not exist
-    }
+    if (!user?.id) throw new Error('Invalid user data format');
+    
+    return user;
   } catch (error) {
-    console.error('Error fetching account limit from Firebase:', error);
-    throw error; // Rethrow the error for the caller to handle
+    console.error('User retrieval error:', error);
+    throw error;
   }
 };
 
 export const checkDeviceId = async (navigation) => {
   try {
-    // Get the current device ID from DeviceInfo
     const localDeviceId = await DeviceInfo.getUniqueId();
-    console.log('Local Device ID:', localDeviceId);
+    const user = await getUser();
 
-    // Get the current user from AsyncStorage
-    const storedUser = await AsyncStorage.getItem('user');
-    if (!storedUser) {
-      console.error('No user found in AsyncStorage');
-      navigation.reset({
-        index: 0,
-        routes: [{ name: 'Login' }], // Redirect to Login screen
-      });
-      return;
+    // Check local storage first
+    if (user.deviceId && user.deviceId !== localDeviceId) {
+      throw new Error('Device ID mismatch (local)');
     }
 
-
-    const user = JSON.parse(storedUser);
-    const userId = user.id;
-
-    console.log('User ID:', localDeviceId);
-
-    if (user.deviceId !== localDeviceId) {
-      console.warn('Device ID mismatch. Redirecting to Login screen.');
-      navigation.reset({
-        index: 0,
-        routes: [{ name: 'Login' }], // Redirect to Login screen
-      });
-      return;
-    }
-
-    if (!userId) {
-      console.error('User ID is missing');
-      navigation.reset({
-        index: 0,
-        routes: [{ name: 'Login' }], // Redirect to Login screen
-      });
-      return;
-    }
-
-    // Reference to the user's deviceId in Firebase
-    const deviceIdRef = ref(database, `users/${userId}/deviceId`);
+    // Verify with Firebase
+    const deviceIdRef = ref(database, `users/${user.id}/deviceId`);
     const snapshot = await get(deviceIdRef);
 
-    if (snapshot.exists()) {
-      const firebaseDeviceId = snapshot.val(); // Get the deviceId from Firebase
-      console.log(`Device ID from Firebase: ${firebaseDeviceId}`);
+    if (!snapshot.exists()) throw new Error('Device not registered');
+    if (snapshot.val() !== localDeviceId) throw new Error('Device ID mismatch (server)');
 
-      if (firebaseDeviceId !== localDeviceId) {
-        console.warn('Device ID mismatch. Redirecting to Login screen.');
-        navigation.reset({
-          index: 0,
-          routes: [{ name: 'Login' }], // Redirect to Login screen
-        });
-      } else {
-        console.log('Device ID matches. Access granted.');
-      }
-    } else {
-      console.warn('No deviceId found in Firebase. Redirecting to Login screen.');
-      navigation.reset({
-        index: 0,
-        routes: [{ name: 'Login' }], // Redirect to Login screen
-      });
-    }
+    return true;
   } catch (error) {
-    console.error('Error checking device ID:', error);
+    console.error('Device verification failed:', error.message);
     navigation.reset({
       index: 0,
-      routes: [{ name: 'Login' }], // Redirect to Login screen on error
+      routes: [{ name: 'Login' }]
     });
+    return false;
   }
 };
 
+// ======================
+// SIM Data Operations
+// ======================
+export const saveLocalSimData = async (item) => {
+  if (!item?.user_id) throw new Error('Invalid item - missing user_id');
 
-
-
-
-export const addToSoldInventory = async (item) => {
   try {
-    if (!item || !item.user_id) {
-      console.warn('Invalid item or missing user_id');
-      return false;
-    }
+    await new Promise((resolve, reject) => {
+      db.transaction(tx => {
+        tx.executeSql(
+          'INSERT OR REPLACE INTO SimData (user_id, data) VALUES (?, ?)',
+          [item.user_id, JSON.stringify(item)],
+          (_, result) => result.rowsAffected > 0 ? resolve() : reject(new Error('No rows affected')),
+          (_, error) => reject(error)
+        );
+      });
+    });
+    return true;
+  } catch (error) {
+    console.error('Local save error:', { error: error.message, itemId: item.user_id });
+    throw error;
+  }
+};
 
-    // Add sold metadata to the item
+export const getLocalSimData = async (page = 1, pageSize = DEFAULT_PAGE_SIZE) => {
+  const offset = (page - 1) * pageSize;
+
+  try {
+    return await new Promise((resolve, reject) => {
+      db.transaction(tx => {
+        tx.executeSql(
+          `SELECT data FROM SimData 
+           ORDER BY json_extract(data, '$.totalPoint') DESC 
+           LIMIT ? OFFSET ?`,
+          [pageSize, offset],
+          (_, result) => {
+            const items = Array.from({ length: result.rows.length }, (_, i) => 
+              JSON.parse(result.rows.item(i).data)
+            );
+            resolve(items);
+          },
+          (_, error) => reject(error)
+        );
+      });
+    });
+  } catch (error) {
+    console.error('Local data retrieval error:', { error: error.message, page, pageSize });
+    throw error;
+  }
+};
+
+export const getAllLocalSimData = async () => {
+  try {
+    return await new Promise((resolve, reject) => {
+      db.transaction(tx => {
+        tx.executeSql(
+          'SELECT data FROM SimData ORDER BY json_extract(data, "$.totalPoint") DESC',
+          [],
+          (_, result) => {
+            const items = Array.from({ length: result.rows.length }, (_, i) => 
+              JSON.parse(result.rows.item(i).data)
+            );
+            resolve(items);
+          },
+          (_, error) => reject(error)
+        );
+      });
+    });
+  } catch (error) {
+    console.error('Local data retrieval error:', error);
+    throw error;
+  }
+};
+
+export const deleteSimData = async (userId) => {
+  try {
+    await new Promise((resolve, reject) => {
+      db.transaction(tx => {
+        tx.executeSql(
+          'DELETE FROM SimData WHERE user_id = ?',
+          [userId],
+          (_, result) => result.rowsAffected > 0 ? resolve() : reject(new Error('No records deleted')),
+          (_, error) => reject(error)
+        );
+      });
+    });
+    return true;
+  } catch (error) {
+    console.error('Local delete error:', { error: error.message, userId });
+    throw error;
+  }
+};
+
+export const deleteAllSqlData = async () => {
+  try {
+    await new Promise((resolve, reject) => {
+      db.transaction(tx => {
+        tx.executeSql(
+          'DELETE FROM SimData',
+          [],
+          (_, result) => resolve(result.rowsAffected),
+          (_, error) => reject(error)
+        );
+      });
+    });
+    return true;
+  } catch (error) {
+    console.error('Local data deletion error:', error);
+    throw error;
+  }
+};
+
+// ======================
+// Firebase Operations
+// ======================
+export const saveFirebaseSimData = async (item) => {
+  try {
+    const user = await getUser();
+    const itemRef = ref(database, `users/${user.id}/data/${item.user_id}`);
+    await set(itemRef, item);
+    return true;
+  } catch (error) {
+    console.error('Firebase save error:', { error: error.message, itemId: item?.user_id });
+    throw error;
+  }
+};
+
+export const getFirebaseSimData = async () => {
+  try {
+    const user = await getUser();
+    const dataRef = ref(database, `users/${user.id}/data`);
+    const snapshot = await get(dataRef);
+    return snapshot.exists() ? snapshot.val() : null;
+  } catch (error) {
+    console.error('Firebase data retrieval error:', error);
+    throw error;
+  }
+};
+
+export const deleteFirebaseSimItem = async (userId) => {
+  try {
+    const user = await getUser();
+    const itemRef = ref(database, `users/${user.id}/data/${userId}`);
+    await set(itemRef, null);
+    await deleteAdminDataItem(userId); // Delete from Firebase admin data
+    return true;
+  } catch (error) {
+    console.error('Firebase delete error:', { error: error.message, userId });
+    throw error;
+  }
+};
+
+export const getAccountLimit = async () => {
+  try {
+    const user = await getUser();
+    const limitRef = ref(database, `users/${user.id}/limitAccount`);
+    const snapshot = await get(limitRef);
+    return snapshot.exists() ? snapshot.val() : null;
+  } catch (error) {
+    console.error('Account limit retrieval error:', error);
+    throw error;
+  }
+};
+
+// ======================
+// Sold Inventory Operations
+// ======================
+export const addToSoldInventory = async (item) => {
+  if (!item?.user_id) throw new Error('Invalid item - missing user_id');
+
+  try {
     const soldItem = {
       ...item,
       inventory_status: 'sold',
       sold_at: new Date().toISOString()
     };
 
-    const dataString = JSON.stringify(soldItem);
-    const soldAt = soldItem.sold_at; // Get the timestamp
-
     await new Promise((resolve, reject) => {
-      db.transaction((tx) => {
+      db.transaction(tx => {
         tx.executeSql(
           'INSERT OR REPLACE INTO SoldSimInventory (user_id, data, sold_at) VALUES (?, ?, ?)',
-          [soldItem.user_id, dataString, soldAt], // Include sold_at in the query
-          () => {
-            console.log(`SIM marked as sold: ${soldItem.user_id}`);
-            resolve(true);
-          },
-          (error) => {
-            console.error('Error adding to sold inventory:', error);
-            reject(error);
-          }
+          [soldItem.user_id, JSON.stringify(soldItem), soldItem.sold_at],
+          (_, result) => result.rowsAffected > 0 ? resolve() : reject(new Error('No rows affected')),
+          (_, error) => reject(error)
         );
       });
     });
-
     return true;
   } catch (error) {
-    console.error('Failed to add to sold inventory:', error);
-    return false;
+    console.error('Sold inventory update error:', { error: error.message, itemId: item.user_id });
+    throw error;
   }
 };
 
-export const getSoldSims = async (page = 1, pageSize = 10) => {
-  return new Promise((resolve, reject) => {
-    const offset = (page - 1) * pageSize;
+export const getSoldSims = async (page = 1, pageSize = DEFAULT_PAGE_SIZE) => {
+  const offset = (page - 1) * pageSize;
 
-    db.transaction((tx) => {
-      tx.executeSql(
-        `SELECT * FROM SoldSimInventory ORDER BY sold_at DESC LIMIT ? OFFSET ?`,
-        [pageSize, offset],
-        (tx, results) => {
-          const data = [];
-          for (let i = 0; i < results.rows.length; i++) {
-            const row = results.rows.item(i);
-            const itemData = JSON.parse(row.data);
-            // Ensure we have the correct sold_at value
-            itemData.sold_at = row.sold_at || itemData.sold_at;
-            data.push(itemData);
-          }
-          resolve(data);
-        },
-        (error) => {
-          console.error('Error fetching sold SIMs:', error);
-          reject(error);
-        }
-      );
+  try {
+    return await new Promise((resolve, reject) => {
+      db.transaction(tx => {
+        tx.executeSql(
+          `SELECT data FROM SoldSimInventory 
+           ORDER BY sold_at DESC 
+           LIMIT ? OFFSET ?`,
+          [pageSize, offset],
+          (_, result) => {
+            const items = Array.from({ length: result.rows.length }, (_, i) => 
+              JSON.parse(result.rows.item(i).data)
+            );
+            resolve(items);
+          },
+          (_, error) => reject(error)
+        );
+      });
     });
-  });
+  } catch (error) {
+    console.error('Sold items retrieval error:', { error: error.message, page, pageSize });
+    throw error;
+  }
 };
 
 export const getAllSoldSims = async () => {
-  return new Promise((resolve, reject) => {
-    db.transaction((tx) => {
-      tx.executeSql(
-        'SELECT * FROM SoldSimInventory ORDER BY sold_at DESC',
-        [],
-        (tx, results) => {
-          const data = [];
-          for (let i = 0; i < results.rows.length; i++) {
-            const row = results.rows.item(i);
-            const itemData = JSON.parse(row.data);
-            // Ensure we have the correct sold_at value
-            itemData.sold_at = row.sold_at || itemData.sold_at;
-            data.push(itemData);
-          }
-          resolve(data);
-        },
-        (error) => {
-          console.error('Error fetching all sold SIMs:', error);
-          reject(error);
-        }
-      );
+  try {
+    return await new Promise((resolve, reject) => {
+      db.transaction(tx => {
+        tx.executeSql(
+          'SELECT data FROM SoldSimInventory ORDER BY sold_at DESC',
+          [],
+          (_, result) => {
+            const items = Array.from({ length: result.rows.length }, (_, i) => 
+              JSON.parse(result.rows.item(i).data)
+            );
+            resolve(items);
+          },
+          (_, error) => reject(error)
+        );
+      });
     });
-  });
+  } catch (error) {
+    console.error('Sold items retrieval error:', error);
+    throw error;
+  }
 };
 
-export const deleteFromSoldInventory = async (user_id) => {
+export const deleteFromSoldInventory = async (userId) => {
   try {
     await new Promise((resolve, reject) => {
-      db.transaction((tx) => {
+      db.transaction(tx => {
         tx.executeSql(
           'DELETE FROM SoldSimInventory WHERE user_id = ?',
-          [user_id],
-          (tx, results) => {
-            if (results.rowsAffected > 0) {
-              console.log(`Deleted sold SIM: ${user_id}`);
-              resolve(true);
-            } else {
-              reject(new Error('No record found'));
-            }
-          },
-          (tx, error) => {
-            console.error('Error deleting from sold inventory:', error);
-            reject(error);
-          }
+          [userId],
+          (_, result) => result.rowsAffected > 0 ? resolve() : reject(new Error('No records deleted')),
+          (_, error) => reject(error)
         );
       });
     });
     return true;
   } catch (error) {
-    console.error('Failed to delete from sold inventory:', error);
-    return false;
+    console.error('Sold inventory deletion error:', { error: error.message, userId });
+    throw error;
   }
 };
 
 export const saveFirebaseSoldSim = async (item) => {
   try {
     const user = await getUser();
-    if (!user?.id) throw new Error('User not found');
-
     const soldSimRef = ref(database, `users/${user.id}/sold_sims/${item.user_id}`);
     await set(soldSimRef, item);
-    console.log('Sold SIM saved to Firebase:', item.user_id);
     return true;
   } catch (error) {
-    console.error('Error saving sold SIM to Firebase:', error);
-    return false;
+    console.error('Firebase sold SIM save error:', { error: error.message, itemId: item?.user_id });
+    throw error;
   }
 };
 
 export const getFirebaseSoldSims = async () => {
   try {
     const user = await getUser();
-    if (!user?.id) throw new Error('User not found');
-
     const soldSimsRef = ref(database, `users/${user.id}/sold_sims`);
     const snapshot = await get(soldSimsRef);
-    
-    if (snapshot.exists()) {
-      return snapshot.val();
-    }
-    return {};
+    return snapshot.exists() ? snapshot.val() : {};
   } catch (error) {
-    console.error('Error fetching sold SIMs from Firebase:', error);
+    console.error('Firebase sold SIMs retrieval error:', error);
     throw error;
   }
 };
 
+export const searchSoldSims = async (searchTerm) => {
+  try {
+    return await new Promise((resolve, reject) => {
+      db.transaction(tx => {
+        tx.executeSql(
+          'SELECT data FROM SoldSimInventory WHERE data LIKE ? ORDER BY sold_at DESC',
+          [`%${searchTerm}%`],
+          (_, result) => {
+            const items = Array.from({ length: result.rows.length }, (_, i) => 
+              JSON.parse(result.rows.item(i).data)
+            );
+            resolve(items);
+          },
+          (_, error) => reject(error)
+        );
+      });
+    });
+  } catch (error) {
+    console.error('Sold items search error:', { error: error.message, searchTerm });
+    throw error;
+  }
+};
+
+// ======================
+// SIM Management
+// ======================
 export const markSimAsSold = async (simItem, saleDetails = {}) => {
   try {
-    // Add sale details to the item
     const soldItem = {
       ...simItem,
       sale_details: {
@@ -726,47 +595,191 @@ export const markSimAsSold = async (simItem, saleDetails = {}) => {
         ...saleDetails
       },
       inventory_status: 'sold',
-      sold_at: new Date().toISOString() // Explicitly set sold_at
+      sold_at: new Date().toISOString()
     };
 
-    // Add to sold inventory
-    await addToSoldInventory(soldItem);
-    await saveFirebaseSoldSim(soldItem);
+    await Promise.all([
+      addToSoldInventory(soldItem),
+      saveFirebaseSoldSim(soldItem),
+      deleteSimData(simItem.user_id),
+      deleteFirebaseSimItem(simItem.user_id)
+    ]);
 
-    // Remove from active inventory
-    // await deleteSimData(simItem.user_id);
-    // await deleteFirebaseSimItem(simItem.user_id);
-
-    console.log(`Successfully marked SIM ${simItem.user_id} as sold`);
     return true;
   } catch (error) {
-    console.error('Error marking SIM as sold:', error);
-    return false;
+    console.error('SIM sale processing error:', { error: error.message, itemId: simItem?.user_id });
+    throw error;
   }
 };
 
-export const searchSoldSims = async (searchTerm) => {
-  return new Promise((resolve, reject) => {
-    db.transaction((tx) => {
-      tx.executeSql(
-        `SELECT * FROM SoldSimInventory WHERE data LIKE ? ORDER BY sold_at DESC`,
-        [`%${searchTerm}%`],
-        (tx, results) => {
-          const data = [];
-          for (let i = 0; i < results.rows.length; i++) {
-            const row = results.rows.item(i);
-            const itemData = JSON.parse(row.data);
-            // Ensure we have the correct sold_at value
-            itemData.sold_at = row.sold_at || itemData.sold_at;
-            data.push(itemData);
-          }
-          resolve(data);
-        },
-        (error) => {
-          console.error('Error searching sold SIMs:', error);
-          reject(error);
-        }
-      );
+// ======================
+// Admin Operations
+// ======================
+export const getAllAdminData = async () => {
+  try {
+    const adminDataRef = ref(database, 'admin/data');
+    const snapshot = await get(adminDataRef);
+
+    if (!snapshot.exists()) return [];
+
+    const data = snapshot.val();
+    return Array.isArray(data) ? data : Object.values(data);
+  } catch (error) {
+    console.error('Admin data retrieval error:', error);
+    throw error;
+  }
+};
+
+export const saveFirebaseAdminData = async (item) => {
+  try {
+    // Sanitize the item by removing undefined values
+    const sanitizedItem = JSON.parse(JSON.stringify(item));
+    
+    
+    const adminDataRef = ref(database, 'admin/data');
+    const snapshot = await get(adminDataRef);
+
+    let data = {};
+    if (snapshot.exists()) {
+      const existingData = snapshot.val();
+      data = Array.isArray(existingData) 
+        ? existingData.reduce((acc, val) => ({ ...acc, [val.user_id]: val }), {})
+        : existingData;
+    }
+
+    data[sanitizedItem.user_id] = sanitizedItem;
+    await set(adminDataRef, data);
+
+    return true;
+  } catch (error) {
+    console.error('Admin data update error:', { 
+      error: error.message, 
+      itemId: item?.user_id,
+      itemData: item // Log the problematic item for debugging
     });
-  });
+    throw error;
+  }
+};
+
+// ======================
+// Admin Data Deletion
+// ======================
+
+
+// Helper function to delete from Firebase admin data
+const deleteAdminDataItem = async (userId) => {
+  try {
+    const adminDataRef = ref(database, 'admin/data');
+    const snapshot = await get(adminDataRef);
+
+    if (!snapshot.exists()) {
+      console.log('No admin data found in Firebase');
+      return true;
+    }
+
+    const currentData = snapshot.val();
+    let updatedData;
+
+    if (Array.isArray(currentData)) {
+      // If data is stored as array
+      updatedData = currentData.filter(item => item.user_id !== userId);
+    } else if (typeof currentData === 'object') {
+      // If data is stored as object
+      updatedData = { ...currentData };
+      delete updatedData[userId];
+    } else {
+      throw new Error('Invalid admin data format in Firebase');
+    }
+
+    await set(adminDataRef, updatedData);
+    console.log(`Admin data for user ${userId} deleted from Firebase`);
+    return true;
+  } catch (error) {
+    console.error(`Error deleting admin data from Firebase for user ${userId}:`, error);
+    throw error;
+  }
+};
+
+// ======================
+// User Data Update Function
+// ======================
+/**
+ * Updates a specific user data item in both Firebase and local SQLite database
+ * @param {string} userId - The ID of the user whose data collection will be updated
+ * @param {object} item - The complete data object to update (must contain user_id field)
+ * @returns {Promise<boolean>} - Returns true if update was successful
+ * @throws {Error} - Throws error if update fails
+ */
+import { getDatabase } from 'firebase/database';
+
+
+export const updateToUser = async (item) => {
+  // Minimal validation - just check if item exists
+  if (!item || typeof item !== 'object') {
+    throw new Error('Input must be an object');
+  }
+
+  // Get IDs without type checking
+  const userId = item.userId;
+  const itemId = item.user_id || item.id;
+
+  // Only check if IDs exist (not their types)
+  if (!userId) throw new Error('Missing userId');
+  if (!itemId) throw new Error('Missing item identifier');
+
+  try {
+    const db = getDatabase();
+    const itemRef = ref(db, `users/${userId}/data/${itemId}`);
+    
+    // Directly set the data (Firebase will handle type conversion)
+    await set(itemRef, item);
+    
+    
+    console.log(`Item ${itemId} saved for user ${userId}`);
+    return true;
+  } catch (error) {
+    console.error('Save operation failed:', {
+      userId,
+      itemId,
+      error: error.message
+    });
+    throw new Error(`Save failed: ${error.message}`);
+  }
+};
+
+export const getCombineData = async () => {
+  try {
+    const usersRef = ref(database, 'users');
+    const snapshot = await get(usersRef);
+
+    if (!snapshot.exists()) return [];
+
+    const usersData = snapshot.val();
+    let combined = [];
+
+    Object.keys(usersData).forEach(userId => {
+      const user = usersData[userId];
+      const rawData = user.data;
+      let dataArr = [];
+
+      if (Array.isArray(rawData)) {
+        dataArr = rawData;
+      } else if (rawData && typeof rawData === 'object') {
+        dataArr = Object.values(rawData);
+      }
+
+      // userId ကို data item တစ်ခုချင်းစီထဲထပ်ထည့်ပေး
+      const withUserId = dataArr.map(item => ({
+        ...item,
+        userId
+      }));
+
+      combined = combined.concat(withUserId);
+    });
+
+    return combined;
+  } catch (error) {
+    console.error('getCombineData error:', error);
+    throw error;
+  }
 };
