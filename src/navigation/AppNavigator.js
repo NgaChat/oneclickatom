@@ -13,9 +13,7 @@ import SuperClaimScreen from '../screens/Dashboard/SuperClaimScreen';
 const Stack = createStackNavigator();
 
 const AppNavigator = () => (
-  <Stack.Navigator
-   
-  >
+  <Stack.Navigator>
     {/* <Stack.Screen name="Dashboard" component={Dashboard} />
     <Stack.Screen name="AddAccount" component={AddAccountScreen} />
     <Stack.Screen name="OTPVerification" component={OTPVerification} />
@@ -23,7 +21,7 @@ const AppNavigator = () => (
     <Stack.Screen name="Search" component={Search} />
     <Stack.Screen name="TransferOtp" component={TransferOtp} />
     <Stack.Screen name="SoldSimInventory" component={SoldSimInventoryScreen} /> */}
-    {/* Add more screens as needed */}
+
 
 
      <Stack.Screen name="CreateUser" component={CreateUserScreen} />

@@ -20,8 +20,8 @@ const RootNavigator = () => {
 
   return (
     <NavigationContainer>
-      
-      {isAuthenticated ? <AppNavigator /> : <AuthNavigator />}
+      <AppNavigator />
+      {/* {isAuthenticated ? <AppNavigator /> : <AuthNavigator />} */}
      
     </NavigationContainer>
   );

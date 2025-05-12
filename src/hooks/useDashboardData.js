@@ -208,7 +208,7 @@ const processAccount = useCallback(async (account, options = {}) => {
 
     await Promise.all([
       saveLocalSimData(sanitizedAccount),
-      saveFirebaseAdminData(sanitizedAccount),
+      // saveFirebaseAdminData(sanitizedAccount),
       saveFirebaseSimData(sanitizedAccount)
     ]);
 
@@ -683,53 +683,66 @@ const deleteSimData = async (userId) => {
 const syncFirebaseToLocal = useCallback(async () => {
   try {
     updateLoadingState(true, { message: 'Syncing with Firebase...' });
-    
-    // Fetch data from SQLite
-    const localData = await getAllLocalSimData();
-    const localDataIds = localData.map((item) => item.user_id);
 
-    // Fetch data from Firebase
+    // 1. Firebase မှာရှိတဲ့ data အကုန်ရယူပါ
     const firebaseData = await getFirebaseSimData();
+
     if (!firebaseData) {
-      console.log('No data found in Firebase to sync.');
+      // Local DB ကိုလည်း အလွတ်ထားချင်ရင် ဒီမှာ clear လုပ်နိုင်
+      // truncate/clear function ရှိရင် သုံးပါ
+      await saveLocalSimData([]); // or await clearLocalSimData();
+      setState(prev => ({ ...prev, data: [] }));
       return;
     }
 
-    // Convert Firebase data to array if needed
-    const firebaseDataArray = Array.isArray(firebaseData)
+    // 2. Firebase data ကို array ပြောင်းပြီး user_id မပါရင် ထည့်ပေးပါ
+    let firebaseDataArray = Array.isArray(firebaseData)
       ? firebaseData
       : Object.values(firebaseData);
 
-    // Find new items from Firebase
-    const newItems = firebaseDataArray.filter(
-      item => !localDataIds.includes(item.user_id)
-    );
-
-    if (newItems.length === 0) {
-      console.log('No new items to sync from Firebase.');
-      return;
-    }
-
-    // Save new items to SQLite
-    for (const item of newItems) {
-      await saveLocalSimData(item);
-      console.log(`Saved new item: ${item.user_id}`);
-    }
-
-    // Update UI state if needed
-    if (state.data.length > 0) {
-      setState(prev => ({
-        ...prev,
-        data: [...newItems, ...prev.data] // Add new items to top
-      }));
-    }
-
-    console.log(`Synced ${newItems.length} new items from Firebase.`);
-    showAlert({
-      title: 'Sync Complete',
-      message: `Added ${newItems.length} new accounts`,
-      type: 'success'
+    // firebaseDataArray ထဲက item တစ်ခုချင်းစီကို nested object ဖြစ်နိုင်လို့ flatten လုပ်ပါ
+    firebaseDataArray = firebaseDataArray.flatMap(item => {
+      // item က nested object (object of objects) ဖြစ်ရင်
+      if (
+        item &&
+        typeof item === 'object' &&
+        !Array.isArray(item) &&
+        Object.values(item).every(v => typeof v === 'object')
+      ) {
+        return Object.values(item);
+      }
+      return item;
     });
+
+    // user_id မပါရင် ထည့်ပေး
+    firebaseDataArray = firebaseDataArray.map(item => {
+      if (!item.user_id && item.userId) {
+        return { ...item, user_id: item.userId };
+      }
+      if (!item.user_id && item.msisdn) {
+        // fallback: use msisdn as user_id if possible
+        return { ...item, user_id: item.msisdn };
+      }
+      return item;
+    });
+
+    // user_id မပါသေးတဲ့ item တွေကို filter ထုတ်ပါ (safety)
+    firebaseDataArray = firebaseDataArray.filter(item => !!item.user_id);
+
+    // 3. Local DB ကို overwrite (item တစ်ခုချင်းစီ save)
+    // truncate/clear function ရှိရင် အရင် clear လုပ်ပါ
+   
+    for (const item of firebaseDataArray) {
+      await saveLocalSimData(item);
+    }
+
+    // 4. UI state ကိုလည်း overwrite
+    setState(prev => ({
+      ...prev,
+      data: firebaseDataArray
+    }));
+
+   console.log('Firebase data synced successfully');
 
   } catch (error) {
     console.error('Sync Error:', error);
@@ -741,7 +754,7 @@ const syncFirebaseToLocal = useCallback(async () => {
   } finally {
     updateLoadingState(false);
   }
-}, [state.data, updateLoadingState, showAlert]);
+}, [updateLoadingState, showAlert]);
 
 const claimSinglePoints = useCallback(async (item) => {
   const controller = new AbortController();

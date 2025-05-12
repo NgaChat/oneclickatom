@@ -1,4 +1,4 @@
-package com.atommaster
+package com.atommaster.admin
 
 import android.app.Application
 import com.facebook.react.PackageList

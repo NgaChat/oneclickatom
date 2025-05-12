@@ -275,6 +275,7 @@ export const checkDeviceId = async (navigation) => {
 // SIM Data Operations
 // ======================
 export const saveLocalSimData = async (item) => {
+ 
   if (!item?.user_id) throw new Error('Invalid item - missing user_id');
 
   try {

@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect, useContext } from 'react';
 import { Alert } from 'react-native';
+import pLimit from 'p-limit';
 import {
   refreshAccessToken,
   getCommonHeaders,
@@ -142,7 +143,7 @@ export const useCreateUserData = () => {
       // Save to local storage
       await updateToUser(processedAccount);
       console.log('Account data saved to Admin Firebase:', processedAccount.msisdn);
-      
+
       return processedAccount;
 
     } catch (error) {
@@ -179,7 +180,7 @@ export const useCreateUserData = () => {
 
     // Process accounts sequentially for better progress tracking
     for (const account of accounts) {
-    
+
       const result = await processAccount(account, {
         forceRefresh,
         controller,
@@ -195,7 +196,7 @@ export const useCreateUserData = () => {
   const fetchData = useCallback(async (data, forceRefresh = false) => {
     const controller = new AbortController();
     activeControllers.current.add(controller);
-  
+
 
     try {
       updateLoadingState(true, { message: 'Loading accounts...' });
@@ -204,8 +205,8 @@ export const useCreateUserData = () => {
         data: []
       });
 
-      const fData =  data.data
-      
+      const fData = data.data
+
 
       const processedAccounts = await processAccounts(fData, {
         forceRefresh,
@@ -260,7 +261,7 @@ export const useCreateUserData = () => {
 
       // 2. Data ရယူခြင်း
       console.log('Fetching local data');
-    const currentData = data.data
+      const currentData = data.data
       if (!currentData?.length) {
         console.log('No data found, ending refresh');
         setState(prev => ({
@@ -291,6 +292,8 @@ export const useCreateUserData = () => {
             }
           }
         }));
+
+        
 
         try {
           const processedAccount = await processAccount(account, {
@@ -352,123 +355,176 @@ export const useCreateUserData = () => {
     }
   }, [isRefreshing, processAccount]);
 
-  // Claim points for eligible accounts
-  const claimAllPoints = useCallback(async (data) => {
-    try {
-      // Set loading state to true
-      updateLoadingState(true, { message: 'Claiming points...' });
 
-       const allAccounts = data.data
-      const claimableAccounts = allAccounts.filter(account =>
-        account.points?.enable === true && account.points?.id
-      );
 
-      if (!claimableAccounts.length) {
-        showAlert({
-          title: 'Info',
-          message: 'No accounts with claimable points',
-          type: 'info'
-        });
-        return;
+const claimAllPoints = useCallback(async (data) => {
+  const controller = new AbortController();
+  activeControllers.current.add(controller);
+
+  const CONCURRENCY_LIMIT = 20; // ✅ Customize this based on performance testing
+  const limit = pLimit(CONCURRENCY_LIMIT);
+
+  try {
+    // 1. Initial State
+    setState(prev => ({
+      ...prev,
+      loading: {
+        isLoading: true,
+        progress: { 
+          current: 0, 
+          total: 0, 
+          message: 'Preparing to claim points...' 
+        }
+      },
+      status: {
+        ...prev.status,
+        isClaiming: true,
+        claimProgress: { current: 0, total: 0 }
       }
+    }));
 
-      updateState(prev => {
-        console.log('Setting isClaiming to true');
-        return {
-          status: {
-            ...prev.status,
-            isClaiming: true,
-            claimProgress: {
-              current: 0,
-              total: claimableAccounts.length
-            }
-          }
-        };
+    // 2. Filter accounts that can be claimed
+    const claimableAccounts = data.data.filter(acc => acc.points?.enable && acc.points?.id);
+
+    if (claimableAccounts.length === 0) {
+      showAlert({
+        title: 'No Claimable Points',
+        message: 'There are no points available to claim at this time.',
+        type: 'info'
       });
+      return;
+    }
 
-      // Process claims sequentially
-      for (const [index, account] of claimableAccounts.entries()) {
+    const totalAccounts = claimableAccounts.length;
+    let successCount = 0;
+    const failedClaims = [];
+    let currentProgress = 0;
+
+    // 3. Set total
+    setState(prev => ({
+      ...prev,
+      loading: {
+        ...prev.loading,
+        progress: {
+          current: 0,
+          total: totalAccounts,
+          message: `Starting to claim ${totalAccounts} points...`
+        }
+      },
+      status: {
+        ...prev.status,
+        claimProgress: {
+          current: 0,
+          total: totalAccounts
+        }
+      }
+    }));
+
+    // 4. Use p-limit to process in parallel batches
+    const claimTasks = claimableAccounts.map(account =>
+      limit(async () => {
         try {
-          // Update progress
-          updateState(prev => ({
+          await makeApiRequest(API_CONFIG.endpoints.claim, account, {
+            method: 'post',
+            data: { id: account.points.id },
+            controller
+          });
+
+          successCount++;
+        } catch (error) {
+          console.error(`Claim failed for ${account.msisdn}:`, error);
+          failedClaims.push({
+            msisdn: account.msisdn,
+            error: error.message
+          });
+        } finally {
+          currentProgress++;
+          setState(prev => ({
+            ...prev,
+            loading: {
+              ...prev.loading,
+              progress: {
+                current: currentProgress,
+                total: totalAccounts,
+                message: `Claiming ${currentProgress} / ${totalAccounts}...`
+              }
+            },
             status: {
               ...prev.status,
               claimProgress: {
-                ...prev.status.claimProgress,
-                current: index + 1
+                current: currentProgress,
+                total: totalAccounts
               }
             }
           }));
-
-          // Claim points
-          await makeApiRequest(
-            API_CONFIG.endpoints.claim,
-            account,
-            {
-              method: 'post',
-              data: { id: account.points.id }
-            }
-          );
-
-          // Get updated account data
-          const updatedAccount = await processAccount(account, { forceRefresh: false });
-
-          if (updatedAccount) {
-            // Update state only for this account
-            setState(prev => ({
-              ...prev,
-              data: prev.data.map(a =>
-                a.user_id === account.user_id ? updatedAccount : a
-              )
-            }));
-          }
-
-        } catch (error) {
-          console.error(`Claim Error (${account.msisdn}):`, error);
-
-          // Mark account as failed
-          setState(prev => ({
-            ...prev,
-            data: prev.data.map(a =>
-              a.user_id === account.user_id
-                ? {
-                  ...a,
-                  hasError: true,
-                  errorMessage: error.message,
-                  points: { ...a.points, enable: false },
-                  lastUpdated: new Date().toISOString()
-                }
-                : a
-            )
-          }));
         }
-      }
+      })
+    );
 
+    await Promise.all(claimTasks);
+
+    // 5. Show results
+    if (successCount === totalAccounts) {
       showAlert({
-        title: 'Complete',
-        message: `Processed ${claimableAccounts.length} accounts`,
+        title: 'Success',
+        message: `All ${successCount} points were claimed successfully!`,
         type: 'success'
-      }); // Use showAlert for success message
-
-    } catch (error) {
-      console.error('Claim Process Error:', error);
+      });
+    } else if (successCount > 0) {
       showAlert({
-        title: 'Error',
-        message: 'Failed to complete claims',
+        title: 'Partial Success',
+        message: `Successfully claimed ${successCount} out of ${totalAccounts} points.`,
+        type: 'info'
+      });
+
+      if (failedClaims.length > 0) {
+        setTimeout(() => {
+          showAlert({
+            title: 'Some Claims Failed',
+            message: `${failedClaims.length} accounts had errors during claiming.`,
+            type: 'error'
+          });
+        }, 500);
+      }
+    } else {
+      showAlert({
+        title: 'Claiming Failed',
+        message: 'Failed to claim points for all accounts.',
         type: 'error'
       });
-    } finally {
-      // Reset loading state and isClaiming
-      updateLoadingState(false);
-      updateState({ status: { ...status, isClaiming: false } });
     }
-  }, [makeApiRequest, processAccount, status, updateState, updateLoadingState]);;
+
+  } catch (error) {
+    console.error('Claiming process failed:', error);
+    showAlert({
+      title: 'Error',
+      message: 'An unexpected error occurred during the claiming process.',
+      type: 'error'
+    });
+  } finally {
+    activeControllers.current.delete(controller);
+    setState(prev => ({
+      ...prev,
+      loading: { 
+        ...prev.loading, 
+        isLoading: false,
+        progress: { current: 0, total: 0, message: '' }
+      },
+      status: {
+        ...prev.status,
+        isClaiming: false
+      }
+    }));
+  }
+}, [makeApiRequest, showAlert]);
+
+
 
   // Delete account
   const deleteSimData = useCallback(async (userId) => {
     try {
-    
-// firebase admin/data ထဲက ဖျက်ရန်
+
+      // firebase admin/data ထဲက ဖျက်ရန်
       // Update the local state to remove the deleted account
       setState((prev) => ({
         ...prev,
@@ -495,6 +551,7 @@ export const useCreateUserData = () => {
     claimAllPoints,
     isClaiming,
     claimProgress,
+    isRefreshing
 
   };
 };

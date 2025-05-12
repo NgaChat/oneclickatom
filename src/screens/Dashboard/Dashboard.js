@@ -11,6 +11,7 @@ import {
   SummaryCard,
   useHeader
 } from '../../components';
+import { useAuth } from '../../context/AuthContext';
 
 const BATCH_SIZE = 20;
 const LOAD_MORE_THRESHOLD = 0.5;
@@ -19,6 +20,7 @@ const Dashboard = ({ navigation }) => {
   const [searchText, setSearchText] = useState('');
   const [localData, setLocalData] = useState([]);
   const [isLoadingLocal, setIsLoadingLocal] = useState(false);
+  const { checkAuthState } = useAuth();
   
   const {
     loadingState,
@@ -38,7 +40,9 @@ const Dashboard = ({ navigation }) => {
   useHeader(navigation, 'Dashboard');
 
 
-
+  useEffect(() => {
+    checkAuthState();
+  }, []);
   // Combined initial data loading
   useEffect(() => {
     const initialize = async () => {

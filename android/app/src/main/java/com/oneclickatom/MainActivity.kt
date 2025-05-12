@@ -1,4 +1,4 @@
-package com.atommaster
+package com.atommaster.admin
 
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
